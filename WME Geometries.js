@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name                WME Geometry (JS55CT Fork)
+// @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2023.8.20.01
+// @version             2023.10.25.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -80,8 +80,7 @@ var geometries = function() {
         W.userscripts.waitForElementConnected(tabPane).then(() => {
 
             let geobox = document.createElement('div');
-            geobox.style.margin = "10px";
-            geobox.style.padding = "15px";
+            geobox.style.padding = "10px";
             geobox.style.backgroundColor = "#fff";
             geobox.style.border = "2px solid #ddd";
             geobox.style.borderRadius = "10px";
@@ -91,7 +90,6 @@ var geometries = function() {
             let geotitle = document.createElement("div"); //legend
             geotitle.innerHTML = GM_info.script.name;
             geotitle.style.textAlign = "center";
-            geotitle.style.marginBottom = "10px";
             geotitle.style.fontSize = "1.1em";
             geotitle.style.fontWeight = "bold";
             geotitle.style.color = "#222";
@@ -100,24 +98,26 @@ var geometries = function() {
             let geoversion = document.createElement("div");
             geoversion.innerHTML = "v " + GM_info.script.version;
             geoversion.style.textAlign = "center";
-            geoversion.style.marginBottom = "10px";
             geoversion.style.fontSize = "0.9em";
             geoversion.style.color = "#222";
             geobox.appendChild(geoversion);
 
-            geobox.appendChild(document.createElement("hr"));
+            let hr = document.createElement("hr");
+            hr.style.marginTop = "5px";
+            hr.style.marginBottom = "5px";
+            hr.style.border = "0";
+            hr.style.borderTop = "1px solid hsl(0, 0%, 93.5%)";
+            geobox.appendChild(hr);
 
             geolist = document.createElement("ul");
-            geolist.style.margin = "10px 0";
+            geolist.style.margin = "5px 0";
             geolist.style.padding = "10px";
-            geolist.style.backgroundColor = "#f9f9f9";
-            geolist.style.borderRadius = "5px";
             geobox.appendChild(geolist);
 
             let geoform = document.createElement("form");
             geoform.style.display = "flex";
             geoform.style.flexDirection = "column";
-            geoform.style.gap = "10px";
+            geoform.style.gap = "0px";
             geoform.id = "geoform"; // added for refrance in WKT text Area
             geobox.appendChild(geoform);
 
@@ -145,11 +145,11 @@ var geometries = function() {
             let customLabel = document.createElement("label");
             customLabel.htmlFor = "GeometryFile";
             customLabel.innerText = "Import GEO File";
-            customLabel.style.padding = "8px 20px";
+            customLabel.style.padding = "8px 0px";
             customLabel.style.fontSize = "1rem";
             customLabel.style.cursor = "pointer";
             customLabel.style.border = "2px solid #8BC34A"; // Light green border
-            customLabel.style.borderRadius = "5px";
+            customLabel.style.borderRadius = "20px";
             customLabel.style.backgroundColor = "#8BC34A"; // Light green background
             customLabel.style.color = "white";
             customLabel.style.display = "block"; // Make the label a block-level element
@@ -173,8 +173,8 @@ var geometries = function() {
             notes.style.color = "#555";
             notes.style.display = "block";
             notes.style.fontSize = "0.9em";
-            notes.style.marginLeft = "18px";
-            notes.style.marginBottom = "1px";
+            notes.style.marginLeft = "0px";
+            notes.style.marginBottom = "0px";
             geoform.appendChild(notes);
 
             // Creates the Clear Selected Items Button
@@ -182,10 +182,10 @@ var geometries = function() {
             inputclear.type = "button";
             inputclear.value = "Clear Selected Items";
             inputclear.title = "Remove Layers Selected Above";
-            inputclear.style.padding = "8px 20px";
+            inputclear.style.padding = "8px 0px";
             inputclear.style.fontSize = "1rem";
             inputclear.style.border = "2px solid #E57373"; // Light red border
-            inputclear.style.borderRadius = "5px";
+            inputclear.style.borderRadius = "20px";
             inputclear.style.cursor = "pointer";
             inputclear.style.backgroundColor = "#E57373"; // Light red background
             inputclear.style.color = "white";
@@ -193,7 +193,7 @@ var geometries = function() {
             inputclear.style.width = "100%";
             inputclear.style.boxSizing = "border-box";
             inputclear.style.textAlign = "center";
-            inputclear.style.marginTop = "10px";
+            inputclear.style.marginTop = "5px";
             inputclear.style.transition = "background-color 0.3s, border-color 0.3s";
             inputclear.addEventListener('click', removeGeometryLayers);
             geoform.appendChild(inputclear);
@@ -203,10 +203,10 @@ var geometries = function() {
             inputstate.type = "button";
             inputstate.value = "Draw State Boundary";
             inputstate.title = "Draw the Boundary for the State in focus";
-            inputstate.style.padding = "8px 20px";
+            inputstate.style.padding = "8px 0px";
             inputstate.style.fontSize = "1rem";
             inputstate.style.border = "2px solid #ADD8E6"; // Light blue border
-            inputstate.style.borderRadius = "5px";
+            inputstate.style.borderRadius = "20px";
             inputstate.style.cursor = "pointer";
             inputstate.style.backgroundColor = "#ADD8E6"; // Light blue background
             inputstate.style.color = "white";
@@ -219,20 +219,26 @@ var geometries = function() {
             inputstate.addEventListener('click', drawStateBoundary);
             geoform.appendChild(inputstate);
 
-
             // Create a container for the color, font size, and fill opacity input fields
             let inputContainer = document.createElement("div");
             inputContainer.style.display = "flex";
             inputContainer.style.flexDirection = "column";
-            inputContainer.style.gap = "10px";
+            inputContainer.style.gap = "5px";
             inputContainer.style.marginTop = "10px"; // Add space at the top
+
+            // Adding a horizontal break before Color and Font Size Position
+            let hrElement1 = document.createElement("hr");
+            hrElement1.style.margin = "5px 0"; // Adjust margin to reduce vertical space
+            hrElement1.style.border = "0"; // Remove default border
+            hrElement1.style.borderTop = "1px solid #ddd"; // Add custom border
+            inputContainer.appendChild(hrElement1);
 
             // Row for color and font size inputs
             let colorFontSizeRow = document.createElement("div");
             colorFontSizeRow.style.display = "flex";
-            colorFontSizeRow.style.justifyContent = "space-between"; // Evenly distribute space between elements
+            colorFontSizeRow.style.justifyContent = "normal"; 
             colorFontSizeRow.style.alignItems = "center";
-            colorFontSizeRow.style.gap = "10px"; // Space between the inputs
+            colorFontSizeRow.style.gap = "0px"; // Space between the inputs
 
             // Color input
             let input_color_label = document.createElement("label");
@@ -240,21 +246,23 @@ var geometries = function() {
             input_color_label.innerHTML = "Color: ";
             input_color_label.style.fontWeight = "normal";
             input_color_label.style.flexShrink = "0"; // Prevent the label from shrinking
+            input_color_label.style.marginRight = "5px"; // Add space between the label and input box
 
             let input_color = document.createElement("input");
             input_color.type = "color";
             input_color.id = "color";
             input_color.value = "#00bfff";
             input_color.name = "color";
-            input_color.style.width = "50px"; // Increase the width of the color input
+            input_color.style.width = "60px"; // Increase the width of the color input
 
             // Font Size
             let input_font_size_label = document.createElement("label");
             input_font_size_label.setAttribute("for", "font_size");
             input_font_size_label.innerHTML = "Font Size: ";
-            input_font_size_label.style.marginLeft = "5pt";
+            input_font_size_label.style.marginLeft = "40px";
             input_font_size_label.style.fontWeight = "normal";
             input_font_size_label.style.flexShrink = "0"; // Prevent the label from shrinking
+            input_font_size_label.style.marginRight = "5px"; // Add space between the label and input box
 
             let input_font_size = document.createElement("input");
             input_font_size.type = "number";
@@ -264,7 +272,8 @@ var geometries = function() {
             input_font_size.name = "font_size";
             input_font_size.value = "12";
             input_font_size.step = "1.0";
-            input_font_size.style.width = "40px"; // Decrease the width of the font size input
+            input_font_size.style.width = "50px"; // Decrease the width of the font size input
+            input_font_size.style.textAlign = "center"; // Center the text inside the input box
 
             // Append elements to the color and font size row
             colorFontSizeRow.appendChild(input_color_label);
@@ -285,7 +294,7 @@ var geometries = function() {
             input_fill_opacity_label.setAttribute("for", "fill_opacity");
             input_fill_opacity_label.innerHTML = `Fill Opacity % [${(0.05 * 100).toFixed()}]`;
             input_fill_opacity_label.style.fontWeight = "normal";
-            input_fill_opacity_label.style.marginBottom = "5px"; // Add a small space below the label
+            //input_fill_opacity_label.style.marginBottom = "5px"; // Add a small space below the label
 
             let input_fill_opacity = document.createElement("input");
             input_fill_opacity.type = "range";
@@ -301,34 +310,14 @@ var geometries = function() {
             input_fill_opacity.style.appearance = "none";
             input_fill_opacity.style.height = "10px";
             input_fill_opacity.style.background = "#ddd";
-            input_fill_opacity.style.borderRadius = "10px";
+            input_fill_opacity.style.borderRadius = "40%";
             input_fill_opacity.style.outline = "none";
-
-            // Style the thumb of the range input
-            input_fill_opacity.style.setProperty('webkitAppearance', 'none');
-            input_fill_opacity.style.marginTop = "1px";
-            input_fill_opacity.style.backgroundColor = "#8BC34A";
-            input_fill_opacity.style.border = "2px solid #8BC34A";
-            input_fill_opacity.style.borderRadius = "50%";
-
-            // CSS for Mozilla (Firefox)
-            input_fill_opacity.style.setProperty('mozAppearance', 'none');
-            input_fill_opacity.style.backgroundColor = "#8BC34A";
-            input_fill_opacity.style.border = "2px solid #8BC34A";
-            input_fill_opacity.style.borderRadius = "50%";
-
-            // CSS for IE/Safari/Older Browsers
-            input_fill_opacity.style.setProperty('msAppearance', 'none');
-            input_fill_opacity.style.backgroundColor = "#8BC34A";
-            input_fill_opacity.style.border = "2px solid #8BC34A";
-            input_fill_opacity.style.borderRadius = "50%";
 
             // Initialize with input color's current value
             let updateOpacityInputStyles = () => {
                 let color = input_color.value;
                 input_fill_opacity.style.backgroundColor = color;
                 input_fill_opacity.style.border = `2px solid ${color}`;
-                input_fill_opacity.style.borderRadius = "50%";
             };
 
             updateOpacityInputStyles();
@@ -362,12 +351,13 @@ var geometries = function() {
             let lineStrokeSizeRow = document.createElement("div");
             lineStrokeSizeRow.style.display = "flex";
             lineStrokeSizeRow.style.alignItems = "center";
-            lineStrokeSizeRow.style.gap = "10px"; // Space between the inputs
+            //lineStrokeSizeRow.style.gap = "10px"; // Space between the inputs
 
             let line_stroke_size_label = document.createElement("label");
             line_stroke_size_label.setAttribute("for", "line_size");
             line_stroke_size_label.innerHTML = "Size:";
             line_stroke_size_label.style.fontWeight = "normal";
+            line_stroke_size_label.style.marginRight = "5px";
 
             let line_stroke_size = document.createElement("input");
             line_stroke_size.type = "number";
@@ -377,7 +367,7 @@ var geometries = function() {
             line_stroke_size.name = "line_size";
             line_stroke_size.value = "1";
             line_stroke_size.step = ".5";
-            line_stroke_size.style.width = "3rem";
+            line_stroke_size.style.width = "50px";
 
             lineStrokeSizeRow.appendChild(line_stroke_size_label);
             lineStrokeSizeRow.appendChild(line_stroke_size);
@@ -390,6 +380,8 @@ var geometries = function() {
             lineStrokeStyleRow.style.display = "flex";
             lineStrokeStyleRow.style.alignItems = "center";
             lineStrokeStyleRow.style.gap = "10px"; // Space between the inputs
+            lineStrokeStyleRow.style.marginTop = "5px";
+            lineStrokeStyleRow.style.marginBottom = "5px";
 
             let line_stroke_types_label = document.createElement("span");
             line_stroke_types_label.innerText = "Style:";
@@ -438,13 +430,11 @@ var geometries = function() {
             let lineStrokeOpacityRow = document.createElement("div");
             lineStrokeOpacityRow.style.display = "flex";
             lineStrokeOpacityRow.style.flexDirection = "column";
-            lineStrokeOpacityRow.style.gap = "10px"; // Space between the inputs
 
             let line_stroke_opacity_label = document.createElement("label");
             line_stroke_opacity_label.setAttribute("for", "line_stroke_opacity");
             line_stroke_opacity_label.innerHTML = "Opacity % [100]";
             line_stroke_opacity_label.style.fontWeight = "normal";
-            line_stroke_opacity_label.style.marginBottom = "5px"; // Add a small space below the label
 
             let line_stroke_opacity = document.createElement("input");
             line_stroke_opacity.type = "range";
@@ -460,34 +450,14 @@ var geometries = function() {
             line_stroke_opacity.style.appearance = "none";
             line_stroke_opacity.style.height = "10px";
             line_stroke_opacity.style.background = "#ddd";
-            line_stroke_opacity.style.borderRadius = "10px";
+            line_stroke_opacity.style.borderRadius = "40%";
             line_stroke_opacity.style.outline = "none";
-
-            // Style the thumb of the range input
-            line_stroke_opacity.style.setProperty('webkitAppearance', 'none');
-            line_stroke_opacity.style.marginTop = "1px";
-            line_stroke_opacity.style.backgroundColor = "#8BC34A";
-            line_stroke_opacity.style.border = "2px solid #8BC34A";
-            line_stroke_opacity.style.borderRadius = "50%";
-
-            // CSS for Mozilla (Firefox)
-            line_stroke_opacity.style.setProperty('mozAppearance', 'none');
-            line_stroke_opacity.style.backgroundColor = "#8BC34A";
-            line_stroke_opacity.style.border = "2px solid #8BC34A";
-            line_stroke_opacity.style.borderRadius = "50%";
-
-            // CSS for IE/Safari/Older Browsers
-            line_stroke_opacity.style.setProperty('msAppearance', 'none');
-            line_stroke_opacity.style.backgroundColor = "#8BC34A";
-            line_stroke_opacity.style.border = "2px solid #8BC34A";
-            line_stroke_opacity.style.borderRadius = "50%";
 
             // Initialize with input color's current value
             let updateLineOpacityInputStyles = () => {
                 let color = input_color.value;
                 line_stroke_opacity.style.backgroundColor = color;
                 line_stroke_opacity.style.border = `2px solid ${color}`;
-                line_stroke_opacity.style.borderRadius = "50%";
             };
 
             updateLineOpacityInputStyles();
@@ -508,11 +478,19 @@ var geometries = function() {
             // Append the line stroke opacity row to the input container
             inputContainer.appendChild(lineStrokeOpacityRow);
 
+            // Adding a horizontal break before Label Position
+            let hrElement2 = document.createElement("hr");
+            hrElement2.style.margin = "5px 0"; // Adjust margin to reduce vertical space
+            hrElement2.style.border = "0"; // Remove default border
+            hrElement2.style.borderTop = "1px solid #ddd"; // Add custom border
+            inputContainer.appendChild(hrElement2);
+
+
             // Section for label position
             let labelPositionSection = document.createElement("div");
             labelPositionSection.style.display = "flex";
             labelPositionSection.style.flexDirection = "column";
-            labelPositionSection.style.gap = "5px"; // Space between the inputs
+            //labelPositionSection.style.gap = "5px"; // Space between the inputs
 
             // Label position section label
             let labelPositionSectionLabel = document.createElement("span");
@@ -524,7 +502,8 @@ var geometries = function() {
             // Container for horizontal and vertical positioning options
             let labelPositionContainer = document.createElement("div");
             labelPositionContainer.style.display = "flex";
-            labelPositionContainer.style.gap = "40px"; // Space between columns
+            labelPositionContainer.style.marginLeft = "10px";
+            labelPositionContainer.style.gap = "80px"; // Space between columns
 
             // Column for horizontal alignment
             let horizontalColumn = document.createElement("div");
@@ -624,11 +603,11 @@ var geometries = function() {
             geoform.appendChild(inputContainer);
 
             // Adding a horizontal break before the WKT input section
-            let hrElement = document.createElement("hr");
-            hrElement.style.margin = "10px 0"; // Adjust margin to reduce vertical space
-            hrElement.style.border = "0"; // Remove default border
-            hrElement.style.borderTop = "1px solid #ddd"; // Add custom border
-            geoform.appendChild(hrElement);
+            let hrElement3 = document.createElement("hr");
+            hrElement3.style.margin = "10px 0"; // Adjust margin to reduce vertical space
+            hrElement3.style.border = "0"; // Remove default border
+            hrElement3.style.borderTop = "1px solid #ddd"; // Add custom border
+            geoform.appendChild(hrElement3);
 
             // New label for the Text Area for WKT input section
             let wktSectionLabel = document.createElement("div");
@@ -677,7 +656,7 @@ var geometries = function() {
             // Container for the buttons
             let buttonContainer = document.createElement("div");
             buttonContainer.style.display = "flex";
-            buttonContainer.style.gap = "20pt"; // Space between the buttons
+            buttonContainer.style.gap = "45px"; // Space between the buttons
 
             // Add the Submit Button
             let submit_WKT_btn = document.createElement("input");
@@ -688,7 +667,7 @@ var geometries = function() {
             submit_WKT_btn.style.padding = "8px 20px";
             submit_WKT_btn.style.fontSize = "1rem";
             submit_WKT_btn.style.border = "2px solid #8BC34A"; // Light green border
-            submit_WKT_btn.style.borderRadius = "5px";
+            submit_WKT_btn.style.borderRadius = "20px";
             submit_WKT_btn.style.cursor = "pointer";
             submit_WKT_btn.style.backgroundColor = "#8BC34A"; // Light green background
             submit_WKT_btn.style.color = "white";
@@ -707,7 +686,7 @@ var geometries = function() {
             clear_WKT_btn.style.padding = "8px 20px";
             clear_WKT_btn.style.fontSize = "1rem";
             clear_WKT_btn.style.border = "2px solid #E57373"; // Light red border
-            clear_WKT_btn.style.borderRadius = "5px";
+            clear_WKT_btn.style.borderRadius = "20px";
             clear_WKT_btn.style.cursor = "pointer";
             clear_WKT_btn.style.backgroundColor = "#E57373"; // Light red background
             clear_WKT_btn.style.color = "white";
