@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2023.11.01.0
+// @version             2023.11.04.0
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -152,7 +152,7 @@ var geometries = function () {
       customLabel.style.borderRadius = "20px";
       customLabel.style.backgroundColor = "#8BC34A"; // Light green background
       customLabel.style.color = "white";
-      customLabel.style.display = "block"; 
+      customLabel.style.display = "block";
       customLabel.style.width = "100%";
       customLabel.style.boxSizing = "border-box";
       customLabel.style.textAlign = "center";
@@ -166,7 +166,7 @@ var geometries = function () {
 
       customLabel.addEventListener("mouseout", function () {
         customLabel.style.backgroundColor = "#8BC34A"; // Original green background
-        customLabel.style.borderColor = "#8BC34A"; 
+        customLabel.style.borderColor = "#8BC34A";
       });
 
       // Append the input file and custom label to the container
@@ -210,12 +210,12 @@ var geometries = function () {
       // Add hover effect for the state boundary button
       inputstate.addEventListener("mouseover", function () {
         inputstate.style.backgroundColor = "#5DADE2"; // Slightly darker blue
-        inputstate.style.borderColor = "#5DADE2"; 
+        inputstate.style.borderColor = "#5DADE2";
       });
 
       inputstate.addEventListener("mouseout", function () {
         inputstate.style.backgroundColor = "#87CEEB"; // Original blue background
-        inputstate.style.borderColor = "#87CEEB"; 
+        inputstate.style.borderColor = "#87CEEB";
       });
 
       inputstate.addEventListener("click", drawStateBoundary);
@@ -309,15 +309,48 @@ var geometries = function () {
 
       // Apply modern styling to the range input
       input_fill_opacity.style.appearance = "none";
-      input_fill_opacity.style.height = "10px";
-      input_fill_opacity.style.background = "#ddd";
-      input_fill_opacity.style.borderRadius = "40%";
+      input_fill_opacity.style.height = "12px";
+      input_fill_opacity.style.borderRadius = "5px";
       input_fill_opacity.style.outline = "none";
 
-      // Initialize with input color's current value
+      // Thumb styling via CSS pseudo-elements
+      const styleElement = document.createElement("style");
+      styleElement.textContent = `
+        input[type=range]::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 15px; /* Thumb width */
+          height: 15px; /* Thumb height */
+          background: #808080; /* Thumb color */
+          cursor: pointer; /* Switch cursor to pointer when hovering the thumb */
+          border-radius: 50%;
+        }
+          input[type=range]::-moz-range-thumb {
+          width: 15px;
+          height: 15px;
+          background: #808080;
+          cursor: pointer;
+          border-radius: 50%;
+        }
+          input[type=range]::-ms-thumb {
+          width: 15px;
+          height: 15px;
+          background: #808080;
+          cursor: pointer;
+          border-radius: 50%;
+        }
+      `;
+
+      document.head.appendChild(styleElement);
+
+      // Initialize with the input color's current value and opacity
       let updateOpacityInputStyles = () => {
         let color = input_color.value;
-        input_fill_opacity.style.backgroundColor = color;
+        let opacityValue = input_fill_opacity.value;
+        let rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}, ${opacityValue})`;
+
+        // Update the background color with opacity
+        input_fill_opacity.style.backgroundColor = rgbaColor;
         input_fill_opacity.style.border = `2px solid ${color}`;
       };
 
@@ -326,7 +359,9 @@ var geometries = function () {
       // Event listener to update the label dynamically
       input_fill_opacity.addEventListener("input", function () {
         input_fill_opacity_label.innerHTML = `Fill Opacity % [${Math.round(this.value * 100)}]`;
+        updateOpacityInputStyles();
       });
+
       // Append elements to the fill opacity row
       fillOpacityRow.appendChild(input_fill_opacity_label);
       fillOpacityRow.appendChild(input_fill_opacity);
@@ -452,15 +487,16 @@ var geometries = function () {
 
       // Apply modern styling to the range input
       line_stroke_opacity.style.appearance = "none";
-      line_stroke_opacity.style.height = "10px";
-      line_stroke_opacity.style.background = "#ddd";
-      line_stroke_opacity.style.borderRadius = "40%";
+      line_stroke_opacity.style.height = "12px";
+      line_stroke_opacity.style.borderRadius = "5px";
       line_stroke_opacity.style.outline = "none";
 
       // Initialize with input color's current value
       let updateLineOpacityInputStyles = () => {
         let color = input_color.value;
-        line_stroke_opacity.style.backgroundColor = color;
+        let opacityValue = line_stroke_opacity.value;
+        let rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}, ${opacityValue})`;
+        line_stroke_opacity.style.backgroundColor = rgbaColor;
         line_stroke_opacity.style.border = `2px solid ${color}`;
       };
 
@@ -469,6 +505,7 @@ var geometries = function () {
       // Event listener to update the label dynamically
       line_stroke_opacity.addEventListener("input", function () {
         line_stroke_opacity_label.innerHTML = `Opacity % [${Math.round(this.value * 100)}]`;
+        updateLineOpacityInputStyles();
       });
       // Add an event listener to update styles when color input changes
       input_color.addEventListener("input", () => {
@@ -714,12 +751,12 @@ var geometries = function () {
       // Add hover effect for clear button
       clear_WKT_btn.addEventListener("mouseover", function () {
         clear_WKT_btn.style.backgroundColor = "#D32F2F"; // Darker red background
-        clear_WKT_btn.style.borderColor = "#D32F2F"; 
+        clear_WKT_btn.style.borderColor = "#D32F2F";
       });
 
       clear_WKT_btn.addEventListener("mouseout", function () {
         clear_WKT_btn.style.backgroundColor = "#E57373"; // Original red background
-        clear_WKT_btn.style.borderColor = "#E57373"; /
+        clear_WKT_btn.style.borderColor = "#E57373";
       });
 
       clear_WKT_btn.addEventListener("click", clear_WKT_input);
@@ -865,7 +902,7 @@ var geometries = function () {
     fileText.innerHTML = "Loading...";
     fileText.style.flexGrow = "1";
     fileText.style.lineHeight = "1";
-    fileText.style.fontSize = "0.95em"; 
+    fileText.style.fontSize = "0.95em";
     fileitem.appendChild(fileText);
 
     // Remove button
@@ -875,9 +912,9 @@ var geometries = function () {
     removeButton.style.color = "white";
     removeButton.style.border = "none";
     removeButton.style.padding = "0px 0px 0px 0px"; // Adjust padding to be smaller
-    removeButton.style.borderRadius = "3px"; 
+    removeButton.style.borderRadius = "3px";
     removeButton.innerHTML = "X";
-    removeButton.style.fontSize = "1.0em"; 
+    removeButton.style.fontSize = "1.0em";
     removeButton.style.width = "16px"; // Make button square
     removeButton.style.height = "16px"; // Make button square
     removeButton.style.marginLeft = "3px"; // Add some spacing from the text
@@ -1017,7 +1054,7 @@ var geometries = function () {
       span.style.color = layerObj.color;
       span.innerHTML = "Loading...";
       span.style.flexGrow = "1";
-      span.style.lineHeight = "1"; 
+      span.style.lineHeight = "1";
       span.style.fontSize = "0.95em";
       liObj.appendChild(span);
 
@@ -1027,13 +1064,13 @@ var geometries = function () {
       removeButton.style.backgroundColor = "#E57373"; // Light red background
       removeButton.style.color = "white";
       removeButton.style.border = "none";
-      removeButton.style.padding = "0px 0px 0px 0px"; 
+      removeButton.style.padding = "0px 0px 0px 0px";
       removeButton.style.borderRadius = "3px";
       removeButton.innerHTML = "X";
-      removeButton.style.fontSize = "1.0em"; 
+      removeButton.style.fontSize = "1.0em";
       removeButton.style.width = "16px";
       removeButton.style.height = "16px";
-      removeButton.style.marginLeft = "3px"; 
+      removeButton.style.marginLeft = "3px";
       removeButton.addEventListener("click", () => removeGeometryLayer(layerObj.filename));
       liObj.appendChild(removeButton);
 

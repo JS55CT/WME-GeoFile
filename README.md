@@ -3,12 +3,17 @@
 WME Geometry File Importer allows you to import various geometry files (supported formats: GeoJSON, GML, WKT, KML, and GPX) into the Waze Map Editor (WME). The script enhances the mapping utilities offered by WME by overlaying geospatial data directly onto the maps.
 
 ## Table of Contents
-- [About](#about)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Enhancements](#enhancements)
-- [Attribution](#attribution)
-- [License](#license)
+
+- [WME Geometry (JS55CT Forked)](#wme-geometry-js55ct-forked)
+  - [Table of Contents](#table-of-contents)
+  - [About](#about)
+  - [Installation](#installation)
+    - [Add the Script via URL - Tampermonkey (Recommended)](#add-the-script-via-url---tampermonkey-recommended)
+    - [Add the Script via URL via Greasemonkey](#add-the-script-via-url-via-greasemonkey)
+  - [Usage](#usage)
+  - [Enhancements](#enhancements)
+  - [Attribution](#attribution)
+  - [License](#license)
 
 ## About
 
@@ -18,29 +23,32 @@ The WME Geometry File Importer allows Waze map editors to benefit from importing
 
 To install this user script, you need to have a userscript manager installed in your browser (such as Tampermonkey or Greasemonkey).
 
-### Add the Script via URL - Tampermonkey (Recommended):
+### Add the Script via URL - Tampermonkey (Recommended)
+
 - Open the Tampermonkey dashboard by clicking on the Tampermonkey icon in your browser toolbar and selecting **"Dashboard"**.
 - In the dashboard, click on the tab that says **"Utilities"**.
-- In the **"Import from URL"** section, paste the following URL:
-```
-https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
-```
+- In the **"Import from URL"** section, paste the following URL
+
+``` https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js ```
+
 - Click on the **"Import"** button.
 - ou will be directed to a page that shows the script. Click the **"Install"** button.
 
-### Add the Script via URL via Greasemonkey:
+### Add the Script via URL via Greasemonkey
+
 - Open Greasemonkey by clicking on the Greasemonkey icon in the browser toolbar and selecting **"Manage User Scripts"**.
 - Click on the **"New User Script"** button.
 - In the script editor that opens, click on the **"Import from URL"** button.
 - Paste the following URL into the dialog that appears:
-```
-https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
-```
+
+``` https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js ```
+
 - Click **"OK"** and then **"Install"** the script.
 
 ## Usage
 
 Once the script is installed and running, it will add a 'GEO' tab to the WME sidebar. You can use this tab to:
+
 - Import geometry files by selecting them from your computer.
 - Customize how these geometry files are displayed on the map (color, font size, fill opacity, line style, and label positions).
 - Clear all imported layers or selectively remove items.
@@ -63,7 +71,7 @@ Relative to the original code by Timbones, the following enhancements have been 
    - Included state boundary drawing functionality with customizable layer formatting that persists in local storage.
 
 4. **Layer Management**:
-   - Added checkboxes and options to clear selected items or all imported layers.
+   - Added options to clear imported layer individually.
    - Added local storage compression for efficient data storage of imported layers.
 
 5. **Improved File Handling**:
@@ -80,7 +88,7 @@ This script is based on the original `WME Geometries` script by Timbones and con
 - **Original Author**: Timbones
   - [Greasy Fork Profile](https://greasyfork.org/users/3339)
 
-- **Contributors**: 
+- **Contributors**:
   - wlodek76
   - Twister-UK
 
