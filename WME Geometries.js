@@ -1133,10 +1133,9 @@ var geometries = function () {
     }
   }
 
-  // https://cdnjs.com/libraries/openlayers/x.y.z/
   function loadOLScript(filename, callback) {
     var version = OpenLayers.VERSION_NUMBER.replace(/Release /, "");
-    console.info("WME Geometries: Loading openlayers/" + version + "/" + filename + ".js");
+    console.info("WME Geometries: Loading openlayers/" + version + "/" + filename + ".js"); // https://cdnjs.com/libraries/openlayers/x.y.z/
 
     var openlayers = document.createElement("script");
     openlayers.src = "https://cdnjs.cloudflare.com/ajax/libs/openlayers/" + version + "/" + filename + ".js";
@@ -1144,11 +1143,11 @@ var geometries = function () {
     openlayers.onload = callback;
     document.head.appendChild(openlayers);
   }
-  // replace missing functions in OpenLayers 2.13.1
+  
   function patchOpenLayers() {
-    console.group("WME Geometries: Patching missing features...");
+    console.group("WME Geometries: Patching missing features..."); // replace missing functions in OpenLayers 2.13.1
     if (!OpenLayers.VERSION_NUMBER.match(/^Release [0-9.]*$/)) {
-      console.error("WME Geometries: OpenLayers version mismatch (" + OpenLayers.VERSION_NUMBER + ") - cannot apply patch");
+      console.error("WME Geometries: OpenLayers version mismatch (" + OpenLayers.VERSION_NUMBER + ") - cannot apply patch"); 
       return;
     }
     loadOLScript("lib/OpenLayers/Format/KML", function () {
