@@ -13,6 +13,7 @@
 // @require             https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js
 // @require             https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
 // @require             https://openlayers.org/api/OpenLayers.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/wicket/1.3.8/wicket.js
 // @grant               none
 // @license             MIT
 // @original-author     Timbones
@@ -29,19 +30,19 @@
 /* jshint bitwise: false */
 /* jshint evil: true */
 /* jshint esversion: 6 */
+/* globals Wkt: true */
 
 var geometries = function () {
   "use strict";
-  const scriptMetadata = GM_info.script; // Metadata for the script
+  const scriptMetadata = GM_info.script;
+  const scriptName = scriptMetadata.name;
   let maxlabels = 100000; // maximum number of features that will be shown with labels
+  let labelname = /^name|name$|^label|label$/;
 
-  // show labels using first attribute that starts or ends with "name" (case insensitive regexp)
-  let labelname = /^name|name$/;
   let geolist;
-  let formathelp = "GeoJSON, WKT";
-  let formats = { GEOJSON: new OpenLayers.Format.GeoJSON(), WKT: new OpenLayers.Format.WKT() };
-  patchOpenLayers(); // patch adds KML, GPX and TXT formats
+  let debug = false;
 
+  let { formats, formathelp } = createLayersFormats();
   let EPSG_4326 = new OpenLayers.Projection("EPSG:4326"); // lat,lon
   let EPSG_4269 = new OpenLayers.Projection("EPSG:4269"); // NAD 83
   let EPSG_3857 = new OpenLayers.Projection("EPSG:3857"); // WGS 84
@@ -61,9 +62,11 @@ var geometries = function () {
     this.linestyle = linestyle;
     this.labelpos = labelpos;
   }
+
   function loadLayers() {
     // Parse any locally stored layer objects
     if (localStorage.WMEGeoLayers != undefined) {
+      console.log(`${scriptName}: Loading Saved Layers ...`);
       storedLayers = JSON.parse(LZString.decompress(localStorage.WMEGeoLayers));
       for (layerindex = 0; layerindex < storedLayers.length; ++layerindex) {
         parseFile(storedLayers[layerindex]);
@@ -74,7 +77,7 @@ var geometries = function () {
   }
   // add interface to WME Scripts tab </>
   function init() {
-    console.group("WME Geometries: Loading GEO tab...");
+    console.log(`${scriptName}: init() called .... Loading User Interface ...`);
     const { tabLabel, tabPane } = W.userscripts.registerSidebarTab("WME Geometries");
     tabLabel.innerText = "GEO";
     W.userscripts.waitForElementConnected(tabPane).then(() => {
@@ -767,12 +770,15 @@ var geometries = function () {
       // Append the container to the form
       geoform.appendChild(wktContainer);
 
-      console.groupEnd("WME Geometries: initialised");
+      console.log(`${scriptName}: User Interface Loaded!`);
       loadLayers();
     });
   }
 
   function draw_WKT() {
+    // use wicket.js for all WKT as it is a more stable parser then the curren OpenLayer Version in WME
+    if (debug) console.log(`${scriptName}:  draw_WKT() from User Input called`);
+
     // Add variables from Options input section to WKT input geo
     let color = document.getElementById("color").value;
     let fillOpacity = document.getElementById("fill_opacity").value;
@@ -783,35 +789,64 @@ var geometries = function () {
     let layerName = document.getElementById("input_WKT_name").value;
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
+    // Check for duplicate layer name
     let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
     for (let i = 0; i < layers.length; i++) {
       if (layers[i].name === "Geometry: " + layerName) {
-        console.info("WME Geometries: current WKT layer name already used");
+        if (debug) console.error(`${scriptName}: current WKT layer name already used`);
+        WazeWrap.Alerts.error(scriptName, "Current WKT layer name already used!");
         return;
       }
     }
-
     let val_from_WKT_textarea = document.getElementById("input_WKT").value;
-    let wkt_format = new OpenLayers.Format.WKT();
-    let input_to_WKT_read = wkt_format.read(val_from_WKT_textarea); // Convert textarea input to WKT feature vector obj
+    if (val_from_WKT_textarea.trim() === "") {
+      if (debug) console.error(`${scriptName}: WKT input is empty.`);
+      WazeWrap.Alerts.error(scriptName, "WKT input is empty.");
+      return;
+    }
+    // Using the Wkt.js library to parse the WKT
+    let wktObj = formats["WKT"];
+    try {
+      wktObj.read(val_from_WKT_textarea);
+      if (debug) console.info(`${scriptName}: WKT input successfuly read:`, wktObj);
+    } catch (error) {
+      if (debug) console.error(`${scriptName}: Error parsing WKT. Please check your input format.`, error);
+      WazeWrap.Alerts.error(scriptName, "Error parsing WKT. Please check your input format.");
+      return;
+    }
+    // Convert WKT to GeoJSON
+    let geojsonData;
+    try {
+      geojsonData = wktObj.toJson();
+      if (debug) console.info(`${scriptName}: WKT input successfuly converted to geoJSON`, geojsonData);
+    } catch (error) {
+      if (debug) console.error(`${scriptName}:  Error converting WKT to GeoJSON`, error);
+      WazeWrap.Alerts.error(scriptName, "Error converting WKT to GeoJSON");
+      return;
+    }
+    // Construct and store the layer object
+    let geojson_to_layer_obj = new layerStoreObj(geojsonData, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+    storedLayers.push(geojson_to_layer_obj);
 
-    // Convert WKT to GeoJSON using OpenLayers format conversion
-    let geojson_format = new OpenLayers.Format.GeoJSON();
-    let convert_WKT_to_geojson = geojson_format.write(input_to_WKT_read); // Convert WKT to GeoJSON
-
-    // Ensure the GeoJSON is serialized safely
-    let serialized_geojson = JSON.stringify(JSON.parse(convert_WKT_to_geojson));
-
-    let geojson_to_layer_obj = new layerStoreObj(serialized_geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
-    storedLayers.push(geojson_to_layer_obj); // Push GeoJSON object to storedLayers
-
-    parseFile(geojson_to_layer_obj); // Send GeoJSON to parseFile function
-    localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers)); // Compress stored layers to save space in localStorage
-
-    console.info(`WME Geometries: Stored WKT Input - ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
+    // Add the layer to the map and parse
+    try {
+      parseFile(geojson_to_layer_obj);
+    } catch (error) {
+      if (debug) console.error(`${scriptName}: Error adding layer to map:`, error);
+      return;
+    }
+    // Compressed storage in localStorage
+    try {
+      localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
+    } catch (error) {
+      if (debug) console.error(`${scriptName}: Error saving to localStorage`, error);
+      return;
+    }
+    console.info(`${scriptName}: Stored WKT Input - ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
   }
 
   function drawStateBoundary() {
+    if (debug) console.info(`${scriptName}: drawStateBoundary() called`);
     // add formating Options and locaal storage for WME refresh availability to Draw State Boundary functionality
     let color = document.getElementById("color").value;
     let fillOpacity = document.getElementById("fill_opacity").value;
@@ -822,16 +857,16 @@ var geometries = function () {
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
     if (!W.model.topState || !W.model.topState.attributes || !W.model.topState.attributes.geometry) {
-      console.info("WME Geometries: no state or geometry available, sorry");
-      WazeWrap.Alerts.info(scriptMetadata.name, "No State or Geometry Available, Sorry!");
+      if (debug) console.info(`${scriptName}: no state or geometry available, sorr`);
+      WazeWrap.Alerts.info(scriptName, "No State or Geometry Available, Sorry!");
       return;
     }
     let layerName = `(${W.model.topState.attributes.name})`;
     let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
     for (let i = 0; i < layers.length; i++) {
       if (layers[i].name == "Geometry: " + layerName) {
-        console.info("WME Geometries: current state already loaded");
-        WazeWrap.Alerts.info(scriptMetadata.name, "Current State Boundary already Loaded!");
+        if (debug) console.info(`${scriptName}: current state already loaded`);
+        WazeWrap.Alerts.info(scriptName, "Current State Boundary already Loaded!");
         return;
       }
     }
@@ -842,7 +877,7 @@ var geometries = function () {
     storedLayers.push(state_obj);
     parseFile(state_obj);
     localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
-    console.info(`WME Geometries: Stored the State of ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
+    console.info(`${scriptName}: Stored the State of ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
   }
 
   // Clears the current contents of the textarea.
@@ -853,6 +888,8 @@ var geometries = function () {
 
   // import selected file as a vector layer
   function addGeometryLayer() {
+    if (debug) console.log(`${scriptName}: addGeometryLayer() called`);
+
     let fileList = document.getElementById("GeometryFile");
     let file = fileList.files[0];
     fileList.value = "";
@@ -924,21 +961,81 @@ var geometries = function () {
     // Check if format is supported
     let parser = formats[fileext];
     if (typeof parser == "undefined") {
-      fileitem.innerHTML = fileext.toUpperCase() + " format not supported :(";
+      fileitem.innerHTML = fileext + " format not supported :(";
       fileitem.style.color = "red";
       return;
     }
 
-    // Read the file into the new layer, and update the localStorage layer cache
     let reader = new FileReader();
     reader.onload = (function (theFile) {
       return function (e) {
         requestAnimationFrame(() => {
-          let tObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+          let tObj;
+
+          if (fileext === "WKT") {
+            if (debug) console.log(`${scriptName}: WKT input file detected, converting to geoJSON .....`);
+
+            // Read all WKT entries
+            let wktContent = e.target.result;
+            let wktLines = wktContent
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => line.length > 0);
+            /*
+             * Support for Multi-Line WKT Files:
+             * This code processes multiple WKT geometries from a multi-line WKT file by:
+             * 1. Splitting the content by line to handle each WKT geometry individually.
+             * 2. Using `merge` to aggregate all geometries into a single multi-geometry object.
+             * 3. Transforming the combined geometries into a GeoJSON FeatureCollection.
+             * This allows different WKT geometries to be read, merged, and converted into
+             * a single object for the application's use, maintaining consolidated handling.
+             */
+            if (wktLines.length === 0) return;
+
+            // Initialize a base Wkt object with the first WKT
+            let baseWktObj = new Wkt.Wkt(); //formats["WKT"];
+            try {
+              baseWktObj.read(wktLines[0]);
+            } catch (error) {
+              console.error(`${scriptName}: Error parsing initial WKT line:`, wktLines[0], error);
+              return;
+            }
+
+            // Merge subsequent WKT lines
+            for (let i = 1; i < wktLines.length; i++) {
+              let wktObj = new Wkt.Wkt(); //formats["WKT"];
+              try {
+                wktObj.read(wktLines[i]);
+                baseWktObj.merge(wktObj);
+              } catch (error) {
+                console.error(`${scriptName}: Error parsing WKT line:`, wktLines[i], error);
+              }
+            }
+
+            // Convert merged WKT to GeoJSON
+            let geojsonData = {
+              type: "FeatureCollection",
+              features: [
+                {
+                  type: "Feature",
+                  geometry: baseWktObj.toJson(),
+                  properties: {
+                    label: filename,
+                  }, // Add additional properties if needed
+                },
+              ],
+            };
+
+            if (debug) console.log(`${scriptName}: WKT merged and converted to GeoJSON:`, geojsonData);
+            tObj = new layerStoreObj(geojsonData, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+          } else {
+            tObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+          }
+
           storedLayers.push(tObj);
           parseFile(tObj);
           localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
-          console.info(`WME Geometries: stored file - ${fileitem.id} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
+          console.info(`${scriptName}: stored file - ${fileitem.id} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
         });
       };
     })(file);
@@ -946,6 +1043,8 @@ var geometries = function () {
   }
 
   function parseFile(layerObj) {
+    if (debug) console.log(`${scriptName}: parseFile(layerObj) called`);
+
     let layerStyle = {
       strokeColor: layerObj.color,
       strokeOpacity: layerObj.lineopacity,
@@ -962,38 +1061,71 @@ var geometries = function () {
       label: "", // Placeholder for label
     };
 
-    let parser = formats[layerObj.fileext];
+    let fileext = layerObj.fileext.toUpperCase();
+    let fileContent = layerObj.fileContent;
+    let filename = layerObj.filename;
+
+    let parser = formats[fileext]; // Ensure extension is uppercase for consistency
+
+    if (!parser) {
+      console.error(`${scriptName}: No parser found for format: ${fileext}`);
+      return;
+    }
     parser.internalProjection = W.map.getProjectionObject();
     parser.externalProjection = EPSG_4326;
 
-    if (/"EPSG:3857"/.test(layerObj.fileContent) || /:EPSG::3857"/.test(layerObj.fileContent)) {
+    if (/"EPSG:3857"/.test(fileContent) || /:EPSG::3857"/.test(fileContent)) {
       parser.externalProjection = EPSG_3857;
-    } else if (/"EPSG:4269"/.test(layerObj.fileContent) || /:EPSG::4269"/.test(layerObj.fileContent)) {
+    } else if (/"EPSG:4269"/.test(fileContent) || /:EPSG::4269"/.test(fileContent)) {
       parser.externalProjection = EPSG_4269;
     }
 
-    let features = parser.read(layerObj.fileContent);
-
+    let features = parser.read(fileContent);
     let labelwith = "(no labels)";
     let labelAttribute = "";
 
     // Declare WME_Geometry outside of the conditional block
     let WME_Geometry;
 
+    // Check if there are any features
     if (features.length > 0) {
+      // Log the total number of features
+      if (debug) console.log(`${scriptName}: Number of features: ${features.length}`);
+
+      // Check if the number of features is within the label limit
       if (features.length <= maxlabels) {
+        if (debug) console.log(`${scriptName}: Processing features for labeling, within max labels limit: ${maxlabels}`);
+
+        // Iterate over each attribute of the first feature
         for (let attrib in features[0].attributes) {
+          // Log the current attribute being evaluated
+          if (debug) console.log(`${scriptName}: Evaluating attribute '${attrib}' for labeling`);
+
+          // Test if the attribute matches the label name pattern
           if (labelname.test(attrib.toLowerCase())) {
+            if (debug) console.log(`${scriptName}: Attribute '${attrib}' matches label pattern`);
+
+            // Check if the attribute value is a string
             if (typeof features[0].attributes[attrib] === "string") {
+              if (debug) console.log(`${scriptName}: Attribute '${attrib}' is a string, and will be used for object labels`);
+
               labelwith = "Attribute used for Labels: " + attrib;
               layerStyle.label = "${formatLabel}";
               labelAttribute = attrib;
+
               break;
+            } else {
+              if (debug) console.log(`${scriptName}: Attribute '${attrib}' is NOT a string type`);
             }
+          } else {
+            // Log if the attribute does not match
+            if (debug) console.log(`${scriptName}: Attribute '${attrib}' does not match the label pattern`);
           }
         }
+      } else {
+        // Log if the number of features exceeds the max label limit
+        if (debug) console.log(`${scriptName}: Features exceed max labels limit, no labeling applied: ${maxlabels}`);
       }
-
       let labelContext = {
         formatLabel: function (feature) {
           if (labelAttribute && feature.attributes.hasOwnProperty(labelAttribute)) {
@@ -1009,7 +1141,7 @@ var geometries = function () {
       let defaultStyle = new OpenLayers.Style(layerStyle, { context: labelContext });
 
       let layerid = "wme_geometry_" + layerindex;
-      WME_Geometry = new OpenLayers.Layer.Vector("Geometry: " + layerObj.filename, {
+      WME_Geometry = new OpenLayers.Layer.Vector("Geometry: " + filename, {
         rendererOptions: { zIndexing: true },
         uniqueName: layerid,
         shortcutKey: "S+" + layerindex,
@@ -1018,17 +1150,17 @@ var geometries = function () {
 
       WME_Geometry.setZIndex(-9999);
       WME_Geometry.displayInLayerSwitcher = true;
-      I18n.translations[I18n.locale].layers.name[layerid] = "WME Geometries: " + layerObj.filename;
+      I18n.translations[I18n.locale].layers.name[layerid] = "WME Geometries: " + filename;
 
       WME_Geometry.styleMap = new OpenLayers.StyleMap(defaultStyle);
       WME_Geometry.addFeatures(features);
       W.map.addLayer(WME_Geometry);
     }
 
-    let liObj = document.getElementById(layerObj.filename.replace(/[^a-z0-9_-]/gi, "_"));
+    let liObj = document.getElementById(filename.replace(/[^a-z0-9_-]/gi, "_"));
     if (!liObj) {
       liObj = document.createElement("li");
-      liObj.id = layerObj.filename.replace(/[^a-z0-9_-]/gi, "_");
+      liObj.id = filename.replace(/[^a-z0-9_-]/gi, "_");
 
       // Style the list item
       liObj.style.position = "relative";
@@ -1071,7 +1203,7 @@ var geometries = function () {
       removeButton.style.width = "16px";
       removeButton.style.height = "16px";
       removeButton.style.marginLeft = "3px";
-      removeButton.addEventListener("click", () => removeGeometryLayer(layerObj.filename));
+      removeButton.addEventListener("click", () => removeGeometryLayer(filename));
       liObj.appendChild(removeButton);
 
       geolist.appendChild(liObj);
@@ -1086,14 +1218,16 @@ var geometries = function () {
           WME_Geometry.destroy();
         }
       } else {
-        spanObj.innerHTML = layerObj.filename;
-        spanObj.title = `${layerObj.fileext.toUpperCase()} ${parser.externalProjection.projCode}: ${features.length} features loaded\n${labelwith}`;
-        console.info(`WME Geometries: Loaded ${layerObj.filename}.${layerObj.fileext.toUpperCase()} ${parser.externalProjection.projCode}: ${features.length} features loaded\n${labelwith}`);
+        spanObj.innerHTML = filename;
+        spanObj.title = `${fileext} ${parser.externalProjection.projCode}: ${features.length} features loaded\n${labelwith}`;
+        console.info(`${scriptName}: Loaded ${filename}.${fileext} ${parser.externalProjection.projCode}: ${features.length} features loaded\n${labelwith}`);
       }
     });
+    if (debug) console.log(`${scriptName}: parseFile(layerObj) Finished!`);
   }
 
   function removeGeometryLayer(filename) {
+    if (debug) console.log(`${scriptName}: removeGeometryLayer() called for (${filename})`);
     const layerName = "Geometry: " + filename;
 
     // Get layers in the W.map marked with the "wme_geometry" layerGroup
@@ -1123,7 +1257,7 @@ var geometries = function () {
       let newLocalStorageSize = localStorage.WMEGeoLayers ? localStorage.WMEGeoLayers.length / 1000 : 0;
       let sizeChange = newLocalStorageSize - localStorageSize;
 
-      console.info(`WME Geometries: Removed 1 file (${filename}). Storage size changed by ${sizeChange}kB. Total size is now ${newLocalStorageSize}kB`);
+      console.info(`${scriptName}: Removed 1 file (${filename}). Storage size changed by ${sizeChange}kB. Total size is now ${newLocalStorageSize}kB`);
 
       // Remove the corresponding list item from the HTML
       let li = document.querySelector(`#${filename.replace(/[^a-z0-9_-]/gi, "_")}`);
@@ -1133,37 +1267,32 @@ var geometries = function () {
     }
   }
 
-  function loadOLScript(filename, callback) {
-    var version = OpenLayers.VERSION_NUMBER.replace(/Release /, "");
-    console.info("WME Geometries: Loading openlayers/" + version + "/" + filename + ".js"); // https://cdnjs.com/libraries/openlayers/x.y.z/
+  function createLayersFormats() {
+    if (debug) console.log(`${scriptName}: createLayersFormats() called`);
 
-    var openlayers = document.createElement("script");
-    openlayers.src = "https://cdnjs.cloudflare.com/ajax/libs/openlayers/" + version + "/" + filename + ".js";
-    openlayers.type = "text/javascript";
-    openlayers.onload = callback;
-    document.head.appendChild(openlayers);
-  }
-  
-  function patchOpenLayers() {
-    console.group("WME Geometries: Patching missing features..."); // replace missing functions in OpenLayers 2.13.1
-    if (!OpenLayers.VERSION_NUMBER.match(/^Release [0-9.]*$/)) {
-      console.error("WME Geometries: OpenLayers version mismatch (" + OpenLayers.VERSION_NUMBER + ") - cannot apply patch"); 
-      return;
+    if (typeof Wkt === "undefined") {
+      console.error(`${scriptName}: Wkt is not available. Ensure the library is correctly included via @require.`);
     }
-    loadOLScript("lib/OpenLayers/Format/KML", function () {
-      formats.KML = new OpenLayers.Format.KML();
-      formathelp += ", KML";
-    });
-    loadOLScript("lib/OpenLayers/Format/GPX", function () {
-      formats.GPX = new OpenLayers.Format.GPX();
-      formathelp += ", GPX";
-    });
-    loadOLScript("lib/OpenLayers/Format/GML", function () {
-      formats.GML = new OpenLayers.Format.GML();
-      formathelp += ", GML";
-    });
-    console.groupEnd();
+
+    let formats = {};
+    let formathelp = "";
+
+    function tryCreateFormat(formatName, FormatConstructor) {
+      try {
+        formats[formatName] = new FormatConstructor();
+        formathelp += `${formatName} | `;
+      } catch (error) {
+        console.error(`${formatName} format is not supported:`, error);
+      }
+    }
+    tryCreateFormat("GEOJSON", OpenLayers.Format.GeoJSON);
+    tryCreateFormat("WKT", Wkt.Wkt); //  use wicket.js to convert all WKT to geoJSON before parsefile() Wkt.read() Wkt.toJSON(), it is a better parser and more statble then OpenLayers.Format.WKT
+    tryCreateFormat("KML", OpenLayers.Format.KML);
+    tryCreateFormat("GPX", OpenLayers.Format.GPX);
+    tryCreateFormat("GML", OpenLayers.Format.GML);
+    return { formats, formathelp };
   }
+
   // Initialize your script
   if (W?.userscripts?.state.isInitialized) {
     init();

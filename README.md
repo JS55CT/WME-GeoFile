@@ -77,6 +77,7 @@ Relative to the original code by Timbones, the following enhancements have been 
 5. **Improved File Handling**:
    - Streamlined the file import process with improved error handling for unsupported file formats.
    - Automatically converts WKT input to GeoJSON before rendering for easier integration with WME.
+   - Supports Multi Line WKT files!
 
 6. **Enhanced Label Management**:
    - Improved label handling, including finer control over label positioning and styling.
