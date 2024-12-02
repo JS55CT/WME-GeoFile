@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2023.11.04.0
+// @version             2024.11.28.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -771,6 +771,11 @@ var geometries = function () {
       geoform.appendChild(wktContainer);
 
       console.log(`${scriptName}: User Interface Loaded!`);
+      // Log the OpenLayers version
+      if (OpenLayers.VERSION_NUMBER) {
+        if (debug) console.log(`${scriptName}: OpenLayers Version: ${OpenLayers.VERSION_NUMBER}`);
+      }
+
       loadLayers();
     });
   }
@@ -1052,25 +1057,30 @@ var geometries = function () {
       strokeDashstyle: layerObj.linestyle,
       fillColor: layerObj.color,
       fillOpacity: layerObj.fillOpacity,
-      pointRadius: 20,
+      pointRadius: layerObj.fontsize,
       fontColor: layerObj.color,
       fontSize: layerObj.fontsize,
       labelOutlineColor: "black",
       labelOutlineWidth: layerObj.fontsize / 4,
       labelAlign: layerObj.labelpos,
-      label: "", // Placeholder for label
+      label: "${formatLabel}",
     };
 
     let fileext = layerObj.fileext.toUpperCase();
     let fileContent = layerObj.fileContent;
     let filename = layerObj.filename;
-
     let parser = formats[fileext]; // Ensure extension is uppercase for consistency
 
     if (!parser) {
       console.error(`${scriptName}: No parser found for format: ${fileext}`);
       return;
     }
+
+    if (!parser) {
+      console.error(`${scriptName}: No parser found for format: ${fileext}`);
+      return;
+    }
+
     parser.internalProjection = W.map.getProjectionObject();
     parser.externalProjection = EPSG_4326;
 
@@ -1110,7 +1120,6 @@ var geometries = function () {
               if (debug) console.log(`${scriptName}: Attribute '${attrib}' is a string, and will be used for object labels`);
 
               labelwith = "Attribute used for Labels: " + attrib;
-              layerStyle.label = "${formatLabel}";
               labelAttribute = attrib;
 
               break;
@@ -1138,7 +1147,7 @@ var geometries = function () {
         },
       };
 
-      let defaultStyle = new OpenLayers.Style(layerStyle, { context: labelContext });
+      let defaultStyle = new OpenLayers.Style( layerStyle , { context: labelContext });
 
       let layerid = "wme_geometry_" + layerindex;
       WME_Geometry = new OpenLayers.Layer.Vector("Geometry: " + filename, {
@@ -1154,6 +1163,9 @@ var geometries = function () {
 
       WME_Geometry.styleMap = new OpenLayers.StyleMap(defaultStyle);
       WME_Geometry.addFeatures(features);
+
+      console.log("WME_Geometry", WME_Geometry);
+
       W.map.addLayer(WME_Geometry);
     }
 
