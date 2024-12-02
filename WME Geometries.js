@@ -1076,11 +1076,6 @@ var geometries = function () {
       return;
     }
 
-    if (!parser) {
-      console.error(`${scriptName}: No parser found for format: ${fileext}`);
-      return;
-    }
-
     parser.internalProjection = W.map.getProjectionObject();
     parser.externalProjection = EPSG_4326;
 
