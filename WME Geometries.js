@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2024.11.28.01
+// @version             2024.12.29.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -21,16 +21,11 @@
 // @original-source     https://greasyfork.org/en/scripts/8129-wme-geometries
 // ==/UserScript==
 
-/* JSHint Directives */
-/* globals OpenLayers: true */
-/* globals LZString: true */
-/* globals W: true */
-/* globals $: true */
-/* globals I18n: true */
-/* jshint bitwise: false */
-/* jshint evil: true */
-/* jshint esversion: 6 */
-/* globals Wkt: true */
+/********
+ * TO DO LIST:
+ *  1. Update Labels for line feachers for pathLabel? and pathLabelCurve?
+ *  2. When adding via a geojson, KML file see if we can parse the oject atrabutes, and provide a user input to select the field to use for the labels. 
+ *********/
 
 var geometries = function () {
   "use strict";
@@ -49,6 +44,7 @@ var geometries = function () {
 
   let layerindex = 0;
   let storedLayers = [];
+  let groupToggler;
 
   function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos) {
     this.fileContent = fileContent;
@@ -63,6 +59,24 @@ var geometries = function () {
     this.labelpos = labelpos;
   }
 
+  /*************************************************************************************
+   * loadLayers
+   *
+   * Description:
+   * Loads and initializes geometrical layers from local storage into the current map environment. This function retrieves
+   * saved layers and processes each one to ensure they are displayed correctly on the map.
+   *
+   * Behavior:
+   * - Checks if any geometrical data is stored in `localStorage` under the key `WMEGeoLayers`.
+   * - If present, decompresses and parses the stored string into the `storedLayers` array.
+   * - Iterates over each stored layer, applying the `parseFile` function to render them in the map interface.
+   * - Initializes `storedLayers` as an empty array if no data is found in local storage.
+   * - Logs the loading process in the console for traceability.
+   *
+   * Notes:
+   * - Assumes the existence of the `LZString` library for decompression and the `parseFile` function for layer processing.
+   * - Utilizes a global `storedLayers` array to maintain the state of loaded layers throughout the session.
+   *********************************************************************************/
   function loadLayers() {
     // Parse any locally stored layer objects
     if (localStorage.WMEGeoLayers != undefined) {
@@ -75,9 +89,35 @@ var geometries = function () {
       storedLayers = [];
     }
   }
-  // add interface to WME Scripts tab </>
+
+  /*********************************************************************
+   * init
+   *
+   * Description:
+   * Initializes the user interface for the "WME Geometries" sidebar tab in the Waze Map Editor. This function sets up
+   * the DOM structure, styles, event listeners, and interactions necessary for importing and working with geometric
+   * files and Well-Known Text (WKT) inputs.
+   *
+   * Parameters:
+   * - This function does not take any direct parameters but interacts with global objects and the document's DOM.
+   *
+   * Behavior:
+   * - Registers a new sidebar tab labeled "GEO" using Waze's userscript API.
+   * - Builds a user interface dynamically, adding elements such as title sections, file inputs, and buttons for importing
+   *   and clearing WKT data.
+   * - Configures event listeners for file input changes and button clicks to handle layer management and WKT drawing.
+   * - Sets default styles and hover effects for UI components to enhance user experience.
+   * - Displays information about available formats and coordinate systems to guide users in their inputs.
+   * - Ensures that the existing layers are loaded upon initialization by calling a separate function, `loadLayers`.
+   * - Provides console logging to trace the steps and confirm successful loading of the UI, with debug messages when applicable.
+   *
+   * Notes:
+   * - Relies on global variables and elements such as `W.userscripts`, `W.map`, and custom functions like `addGeometryLayer`, `drawStateBoundary`, and `draw_WKT`.
+   * - Incorporates CSS styling to maintain consistency with the WME environment and improve usability.
+   *************************************************************************/
   function init() {
     console.log(`${scriptName}: init() called .... Loading User Interface ...`);
+
     const { tabLabel, tabPane } = W.userscripts.registerSidebarTab("WME Geometries");
     tabLabel.innerText = "GEO";
     W.userscripts.waitForElementConnected(tabPane).then(() => {
@@ -780,6 +820,30 @@ var geometries = function () {
     });
   }
 
+  /****************************************************************************
+   * draw_WKT
+   *
+   * Description:
+   * Parses user-supplied Well-Known Text (WKT) to create a geometric layer on the map using the wicket.js library for
+   * reliable parsing. This function configures the layer with user-defined styling options and ensures the layer is
+   * stored and displayed appropriately.
+   *
+   * Parameters:
+   * - No explicit parameters are passed; all input is taken from DOM elements configured by the user.
+   *
+   * Behavior:
+   * - Retrieves styling options and WKT input from predefined HTML elements.
+   * - Checks for duplicate layer names to prevent adding layers with the same name to the map.
+   * - Validates the presence of WKT input and handles errors related to parsing and conversion to GeoJSON format.
+   * - Constructs a `layerStoreObj` containing the parsed GeoJSON data and its styling details.
+   * - Uses `parseFile` to add the parsed and styled layer to the map.
+   * - Compresses and stores the layer information in `localStorage` for persistence.
+   * - Provides users with real-time feedback via console logs and alerts when debug mode is enabled or when errors arise.
+   *
+   * Notes:
+   * - Utilizes global variables and functions such as `formats`, `storedLayers`, and `parseFile`.
+   * - Relies on DOM elements and user inputs that need to be correctly set up in the environment for this function to work.
+   *****************************************************************************/
   function draw_WKT() {
     // use wicket.js for all WKT as it is a more stable parser then the curren OpenLayer Version in WME
     if (debug) console.log(`${scriptName}:  draw_WKT() from User Input called`);
@@ -822,7 +886,15 @@ var geometries = function () {
     // Convert WKT to GeoJSON
     let geojsonData;
     try {
-      geojsonData = wktObj.toJson();
+      let geometry = wktObj.toJson();
+      geojsonData = {
+        type: "Feature",
+        geometry: geometry,
+        properties: {
+          Name: layerName,
+        },
+      };
+
       if (debug) console.info(`${scriptName}: WKT input successfuly converted to geoJSON`, geojsonData);
     } catch (error) {
       if (debug) console.error(`${scriptName}:  Error converting WKT to GeoJSON`, error);
@@ -850,6 +922,30 @@ var geometries = function () {
     console.info(`${scriptName}: Stored WKT Input - ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
   }
 
+  /*******************************************************************************
+   * drawStateBoundary
+   *
+   * Description:
+   * This function draws the boundary of the currently selected state on the map, using specific styling options
+   * provided by the user. It checks for the existence of the state boundary data, ensures that it’s not already
+   * loaded, and then processes it into a geometrically styled layer.
+   *
+   * Parameters:
+   * - No direct parameters; relies on DOM elements and global objects for inputs and operations.
+   *
+   * Behavior:
+   * - Extracts styling options from DOM input elements for color, opacity, font size, line style, and label position.
+   * - Checks if the state and its geometry data are available in the global WME (Waze Map Editor) model.
+   * - Verifies whether the state’s geometric boundary is already loaded on the map to prevent duplication.
+   * - Constructs a `layerStoreObj` with the state’s geometry data serialized to a GeoJSON format along with styling.
+   * - Calls `parseFile` to create and add the state boundary as a new map layer.
+   * - Updates localStorage with the compressed state geometry data, maintaining persistence across sessions.
+   *
+   * Notes:
+   * - Utilizes global variables such as `W.map`, `W.model`, and `storedLayers`, which must be pre-defined.
+   * - Provides user feedback through console logs and UI alerts, especially when the state data is unavailable or already loaded.
+   * - Debug logging is conditional based on the `debug` flag to assist in development and troubleshooting.
+   *****************************************************************************/
   function drawStateBoundary() {
     if (debug) console.info(`${scriptName}: drawStateBoundary() called`);
     // add formating Options and locaal storage for WME refresh availability to Draw State Boundary functionality
@@ -862,11 +958,13 @@ var geometries = function () {
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
     if (!W.model.topState || !W.model.topState.attributes || !W.model.topState.attributes.geometry) {
-      if (debug) console.info(`${scriptName}: no state or geometry available, sorr`);
+      if (debug) console.info(`${scriptName}: no state or geometry available, sorry!`);
       WazeWrap.Alerts.info(scriptName, "No State or Geometry Available, Sorry!");
       return;
     }
-    let layerName = `(${W.model.topState.attributes.name})`;
+    let layerName = `(${W.model.topState.attributes.name})`.replace(/[^A-Za-z]/g, "");
+    if (debug) console.info(`${scriptName}: State or geometry is:`, layerName);
+
     let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
     for (let i = 0; i < layers.length; i++) {
       if (layers[i].name == "Geometry: " + layerName) {
@@ -877,9 +975,26 @@ var geometries = function () {
     }
 
     let state_geo = W.model.topState.attributes.geometry;
-    let state_geo_to_json = JSON.stringify(state_geo); // Serialize the GeoJSON object safely
-    let state_obj = new layerStoreObj(state_geo_to_json, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+    // Convert to GeoJSON
+    let state_geojson;
+    try {
+      state_geojson = {
+        type: "Feature",
+        geometry: state_geo,
+        properties: {
+          Name: layerName,
+        },
+      };
+    } catch (error) {
+      if (debug) console.error(`${scriptName}:  Error converting topState.attributes.geometry to GeoJSON`, error);
+      WazeWrap.Alerts.error(scriptName, "Error converting topState.attributes.geometry to GeoJSON");
+      return;
+    }
+
+    let state_obj = new layerStoreObj(state_geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
     storedLayers.push(state_obj);
+
+    if (debug) console.info(`${scriptName}: State _obj:`, state_obj);
     parseFile(state_obj);
     localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
     console.info(`${scriptName}: Stored the State of ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
@@ -891,7 +1006,33 @@ var geometries = function () {
     document.getElementById("input_WKT_name").value = "";
   }
 
-  // import selected file as a vector layer
+  /*************************************************************************
+   * addGeometryLayer
+   *
+   * Description:
+   * Facilitates the addition of a new geometry layer to the map by reading a user-selected file, parsing its contents,
+   * and configuring the layer with specified styling options. The function also updates UI elements and handles storage
+   * of the layer information.
+   *
+   * Parameters:
+   * - This function does not take explicit parameters, but it relies on DOM elements for file input and styling options.
+   *
+   * Behavior:
+   * - Retrieves a file from the user's input and extracts necessary metadata such as the filename and file extension.
+   * - Gathers styling options from the DOM input elements (e.g., color, opacity, line style).
+   * - Sanitizes and prepares a list item in the UI to reflect the status of the file processing.
+   * - Validates file format support and utilizes a `FileReader` to process the file asynchronously.
+   * - Handles WKT files by reading each line as individual geometries and converting them to separate GeoJSON features.
+   *   Creates a GeoJSON FeatureCollection with each line represented as distinctive features for flexible layer manipulation.
+   * - Constructs a `fileObj` with all necessary data and style properties for each geometry, encapsulating each converted
+   *   feature into the feature collection.
+   * - Parses the file object through `parseFile` to create visual layers on the map for each feature.
+   * - Updates local storage with compressed data for persistence of the newly added layers.
+   *
+   * Notes:
+   * - Depends on the accurate setup of global context variables and elements like `geolist` and `storedLayers` for successful execution.
+   * - Provides extensive logging details if the `debug` flag is enabled, aiding in the troubleshooting and validation process.
+   *************************************************************************/
   function addGeometryLayer() {
     if (debug) console.log(`${scriptName}: addGeometryLayer() called`);
 
@@ -975,70 +1116,58 @@ var geometries = function () {
     reader.onload = (function (theFile) {
       return function (e) {
         requestAnimationFrame(() => {
-          let tObj;
+          let fileObj;
 
+          // Process to convert WKT files into a GeoJSON format with each line as a separate feature.
           if (fileext === "WKT") {
-            if (debug) console.log(`${scriptName}: WKT input file detected, converting to geoJSON .....`);
+            if (debug) console.log(`${scriptName}: WKT file detected, converting each line to individual GeoJSON features...`);
 
-            // Read all WKT entries
             let wktContent = e.target.result;
             let wktLines = wktContent
               .split("\n")
               .map((line) => line.trim())
               .filter((line) => line.length > 0);
-            /*
-             * Support for Multi-Line WKT Files:
-             * This code processes multiple WKT geometries from a multi-line WKT file by:
-             * 1. Splitting the content by line to handle each WKT geometry individually.
-             * 2. Using `merge` to aggregate all geometries into a single multi-geometry object.
-             * 3. Transforming the combined geometries into a GeoJSON FeatureCollection.
-             * This allows different WKT geometries to be read, merged, and converted into
-             * a single object for the application's use, maintaining consolidated handling.
-             */
-            if (wktLines.length === 0) return;
 
-            // Initialize a base Wkt object with the first WKT
-            let baseWktObj = new Wkt.Wkt(); //formats["WKT"];
-            try {
-              baseWktObj.read(wktLines[0]);
-            } catch (error) {
-              console.error(`${scriptName}: Error parsing initial WKT line:`, wktLines[0], error);
+            if (wktLines.length === 0) {
               return;
             }
 
-            // Merge subsequent WKT lines
-            for (let i = 1; i < wktLines.length; i++) {
-              let wktObj = new Wkt.Wkt(); //formats["WKT"];
-              try {
-                wktObj.read(wktLines[i]);
-                baseWktObj.merge(wktObj);
-              } catch (error) {
-                console.error(`${scriptName}: Error parsing WKT line:`, wktLines[i], error);
-              }
-            }
+            let features = []; // To hold each GeoJSON feature
 
-            // Convert merged WKT to GeoJSON
+            // Process each WKT line into separate GeoJSON features
+            wktLines.forEach((line, index) => {
+              let wktObj = new Wkt.Wkt();
+              try {
+                wktObj.read(line);
+                let geoJsonGeometry = wktObj.toJson();
+                let feature = {
+                  type: "Feature",
+                  geometry: geoJsonGeometry,
+                  properties: {
+                    name: `${filename}`, // Naming feature based on file name and index
+                  },
+                };
+                features.push(feature); // Add the feature to the features array
+              } catch (error) {
+                console.error(`${scriptName}: Error parsing WKT line:`, line, error);
+              }
+            });
+
+            // Create a GeoJSON FeatureCollection with all features
             let geojsonData = {
               type: "FeatureCollection",
-              features: [
-                {
-                  type: "Feature",
-                  geometry: baseWktObj.toJson(),
-                  properties: {
-                    label: filename,
-                  }, // Add additional properties if needed
-                },
-              ],
+              features: features,
             };
 
-            if (debug) console.log(`${scriptName}: WKT merged and converted to GeoJSON:`, geojsonData);
-            tObj = new layerStoreObj(geojsonData, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+            if (debug) console.log(`${scriptName}: All WKT lines converted to separate GeoJSON features:`, geojsonData);
+            fileObj = new layerStoreObj(geojsonData, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
           } else {
-            tObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+            fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
           }
 
-          storedLayers.push(tObj);
-          parseFile(tObj);
+          // Add the resulting object to stored layers and update map.
+          storedLayers.push(fileObj);
+          parseFile(fileObj);
           localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
           console.info(`${scriptName}: stored file - ${fileitem.id} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
         });
@@ -1047,28 +1176,64 @@ var geometries = function () {
     reader.readAsText(file);
   }
 
-  function parseFile(layerObj) {
-    if (debug) console.log(`${scriptName}: parseFile(layerObj) called`);
+  /*************************************************************************************
+   * parseFile
+   *
+   * Description:
+   * This function processes a file object containing geographic data, formats and styles it, and adds it as a vector layer
+   * to the map. It updates the User Interface (UI) with a list item reflecting the file's loading status and handles
+   * additional label formatting based on the file's attributes.
+   *
+   * Parameters:
+   * @param {Object} fileObj - An object containing the data and metadata of the file to be parsed.
+   *   - {string} fileObj.filename - Name of the file.
+   *   - {string} fileObj.fileext - File extension used to determine the parser to use.
+   *   - {string} fileObj.fileContent - The content of the file.
+   *   - {string} fileObj.color - Color setting for layer styling.
+   *   - {number} fileObj.lineopacity, fileObj.linesize, fileObj.linestyle - Line styling settings.
+   *   - {number} fileObj.fillOpacity - Opacity setting for filled areas.
+   *   - {number} fileObj.fontsize - Font size for labeling.
+   *   - {string} fileObj.labelpos - Anchor position for labels.
+   *
+   * Behavior:
+   * - Logs debug information if debugging is enabled.
+   * - Configures style settings for the vector layer based on the properties of `fileObj`.
+   * - Determines parser based on the file's extension and sets the projection accordingly.
+   * - Parses the file content and extracts features, handling errors by logging them.
+   * - Evaluates feature attributes to find a label attribute if the number of features allows it.
+   * - Creates and styles a vector layer, adds it to the map, and manages labeling.
+   * - Updates or creates a corresponding list item in the UI to reflect file loading status.
+   * - Utilizes the global context including `W.map` for map operations and `geolist` for UI operations.
+   ***************************************************************************************/
+  function parseFile(fileObj) {
+    if (debug) console.log(`${scriptName}: parseFile(fileObj) called`);
+
+    if (debug) console.log(`${scriptName}: fileObj:`, fileObj);
 
     let layerStyle = {
-      strokeColor: layerObj.color,
-      strokeOpacity: layerObj.lineopacity,
-      strokeWidth: layerObj.linesize,
-      strokeDashstyle: layerObj.linestyle,
-      fillColor: layerObj.color,
-      fillOpacity: layerObj.fillOpacity,
-      pointRadius: layerObj.fontsize,
-      fontColor: layerObj.color,
-      fontSize: layerObj.fontsize,
+      strokeColor: fileObj.color,
+      strokeOpacity: fileObj.lineopacity,
+      strokeWidth: fileObj.linesize,
+      strokeDashstyle: fileObj.linestyle,
+      fillColor: fileObj.color,
+      fillOpacity: fileObj.fillOpacity,
+      pointRadius: fileObj.fontsize,
+      fontColor: fileObj.color,
+      fontSize: fileObj.fontsize,
       labelOutlineColor: "black",
-      labelOutlineWidth: layerObj.fontsize / 4,
-      labelAlign: layerObj.labelpos,
-      label: "${formatLabel}",
+      labelOutlineWidth: fileObj.fontsize / 4,
+      labelAlign: fileObj.labelpos,
+      //labelXOffset: 0,
+      //labelYOffset: 0,
+      label: "${formatLabel}", // Your existing label formatting function
+      //pathLabel: "${formatLabel}", // Attempt path labeling
+      //pathLabelCurve: true, // Use the curve flag for path following
+      //pathLabelReadable: true, // Ensures label is readable without inversion
     };
 
-    let fileext = layerObj.fileext.toUpperCase();
-    let fileContent = layerObj.fileContent;
-    let filename = layerObj.filename;
+    let fileext = fileObj.fileext.toUpperCase();
+    let fileContent = fileObj.fileContent;
+    let filename = fileObj.filename;
     let parser = formats[fileext]; // Ensure extension is uppercase for consistency
 
     if (!parser) {
@@ -1085,7 +1250,14 @@ var geometries = function () {
       parser.externalProjection = EPSG_4269;
     }
 
-    let features = parser.read(fileContent);
+    let features;
+    try {
+      features = parser.read(fileContent);
+    } catch (error) {
+      console.error(`${scriptName}: Error parsing file content for ${filename}:`, error);
+      return; // Exit the function if parsing fails
+    }
+
     let labelwith = "(no labels)";
     let labelAttribute = "";
 
@@ -1142,26 +1314,26 @@ var geometries = function () {
         },
       };
 
-      let defaultStyle = new OpenLayers.Style( layerStyle , { context: labelContext });
+      let defaultStyle = new OpenLayers.Style(layerStyle, { context: labelContext });
 
       let layerid = "wme_geometry_" + layerindex;
       WME_Geometry = new OpenLayers.Layer.Vector("Geometry: " + filename, {
         rendererOptions: { zIndexing: true },
         uniqueName: layerid,
-        shortcutKey: "S+" + layerindex,
         layerGroup: "wme_geometry",
       });
 
       WME_Geometry.setZIndex(-9999);
-      WME_Geometry.displayInLayerSwitcher = true;
       I18n.translations[I18n.locale].layers.name[layerid] = "WME Geometries: " + filename;
-
       WME_Geometry.styleMap = new OpenLayers.StyleMap(defaultStyle);
       WME_Geometry.addFeatures(features);
 
-      console.log("WME_Geometry", WME_Geometry);
-
-      W.map.addLayer(WME_Geometry);
+      if (debug) console.log(`${scriptName}: New WME_Geometry Object:`, WME_Geometry);
+      if (!groupToggler) {
+        groupToggler = addGroupToggler(false, "layer-switcher-group_wme_geometries", "WME Geometries");
+      }
+      addLayerToggler(groupToggler, filename, WME_Geometry);
+      W.map.addLayer(WME_Geometry); // Addes new Layer to WME
     }
 
     let liObj = document.getElementById(filename.replace(/[^a-z0-9_-]/gi, "_"));
@@ -1190,7 +1362,7 @@ var geometries = function () {
       });
 
       let span = document.createElement("span");
-      span.style.color = layerObj.color;
+      span.style.color = fileObj.color;
       span.innerHTML = "Loading...";
       span.style.flexGrow = "1";
       span.style.lineHeight = "1";
@@ -1230,50 +1402,102 @@ var geometries = function () {
         console.info(`${scriptName}: Loaded ${filename}.${fileext} ${parser.externalProjection.projCode}: ${features.length} features loaded\n${labelwith}`);
       }
     });
-    if (debug) console.log(`${scriptName}: parseFile(layerObj) Finished!`);
+
+    if (debug) console.log(`${scriptName}: parseFile(fileObj) Finished!`);
   }
 
+  /***************************************************************************
+   * removeGeometryLayer
+   *
+   * Description:
+   * This function removes a specified geometry layer from the map, updates the stored layers,
+   * and manages corresponding UI elements and local storage entries.
+   *
+   * Parameters:
+   * @param {string} filename - The name of the file associated with the geometry layer to be removed.
+   *
+   * Behavior:
+   * - Identifies and destroys the specified geometry layer from the map.
+   * - Updates the `storedLayers` array by removing the layer corresponding to the filename.
+   * - Identifies and removes UI elements associated with the layer:
+   *   - The toggler item identified by the prefixed ID "t_[sanitizedFilename]".
+   *   - The list item identified by the filename.
+   * - Updates local storage:
+   *   - Removes the entire storage entry if no layers remain.
+   *   - Compresses and updates the storage entry with remaining layers if any exist.
+   * - Logs the changes in local storage size.
+   ****************************************************************************/
   function removeGeometryLayer(filename) {
-    if (debug) console.log(`${scriptName}: removeGeometryLayer() called for (${filename})`);
-    const layerName = "Geometry: " + filename;
+    if (debug) {
+      console.log(`${scriptName}: removeGeometryLayer() called for (${filename})`);
+    }
 
-    // Get layers in the W.map marked with the "wme_geometry" layerGroup
-    let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
-    let layerToDestroy = layers.find((layer) => layer.name === layerName);
+    const layerName = `Geometry: ${filename}`;
+    const layers = W.map.getLayersBy("layerGroup", "wme_geometry");
+    const layerToDestroy = layers.find((layer) => layer.name === layerName);
 
-    if (layerToDestroy) {
-      // Destroy the layer
-      layerToDestroy.destroy();
+    if (!layerToDestroy) {
+      console.info(`${scriptName}: No layer found for (${filename})`);
+      return;
+    }
 
-      // Remove from storedLayers
-      storedLayers = storedLayers.filter((obj) => obj.filename !== filename);
+    // Destroy the layer
+    layerToDestroy.destroy();
 
-      // Store the current local storage size and current layer array length
-      let localStorageSize = localStorage.WMEGeoLayers ? localStorage.WMEGeoLayers.length / 1000 : 0;
-      let layerindex = storedLayers.length;
+    // Update storedLayers by filtering out the removed layer
+    storedLayers = storedLayers.filter((layer) => layer.filename !== filename);
 
-      // If there are no more layers, remove the local storage item and set the layer array to an empty array
-      if (layerindex === 0) {
-        localStorage.removeItem("WMEGeoLayers");
-        storedLayers = [];
-      } else {
-        // Otherwise, compress the remaining layers in the array and store it into local storage
-        localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
-      }
-      // Calculate the new local storage size and the change in size
-      let newLocalStorageSize = localStorage.WMEGeoLayers ? localStorage.WMEGeoLayers.length / 1000 : 0;
-      let sizeChange = newLocalStorageSize - localStorageSize;
+    // Sanitize filename and define IDs
+    const listItemId = filename.replace(/[^a-z0-9_-]/gi, "_");
+    const layerTogglerId = `t_${listItemId}`;
 
-      console.info(`${scriptName}: Removed 1 file (${filename}). Storage size changed by ${sizeChange}kB. Total size is now ${newLocalStorageSize}kB`);
+    // Remove the toggler item if it exists
+    const togglerItem = document.getElementById(layerTogglerId);
+    if (togglerItem?.parentElement) {
+      togglerItem.parentElement.removeChild(togglerItem);
+    }
 
-      // Remove the corresponding list item from the HTML
-      let li = document.querySelector(`#${filename.replace(/[^a-z0-9_-]/gi, "_")}`);
-      if (li) {
-        li.remove();
-      }
+    const initialLocalStorageSize = localStorage.WMEGeoLayers ? localStorage.WMEGeoLayers.length / 1000 : 0;
+
+    // Update local storage based on the remaining layers
+    if (storedLayers.length === 0) {
+      localStorage.removeItem("WMEGeoLayers");
+      storedLayers = [];
+    } else {
+      localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
+    }
+
+    const newLocalStorageSize = localStorage.WMEGeoLayers ? localStorage.WMEGeoLayers.length / 1000 : 0;
+    const sizeChange = newLocalStorageSize - initialLocalStorageSize;
+
+    console.info(`${scriptName}: Removed file (${filename}). Storage size changed by ${sizeChange}kB. Total size is now ${newLocalStorageSize}kB.`);
+
+    // Remove any list item using the listItemId
+    const listItem = document.getElementById(listItemId);
+    if (listItem) {
+      listItem.remove();
     }
   }
 
+  /********************************************************************
+   * createLayersFormats
+   *
+   * Description:
+   * Initializes and returns an object of supported geometric data formats for use in parsing and rendering map data.
+   * This function checks for the availability of various format parsers and creates instance objects for each, capturing
+   * any parsing capabilities with error handling.
+   *
+   * Process:
+   * - Verifies the availability of the `Wkt` library, logging an error if it is not loaded.
+   * - Defines a helper function `tryCreateFormat` to instantiate format objects and log successes or errors.
+   * - Attempts to create format instances for GEOJSON, WKT, KML, GPX, and GML using corresponding constructors.
+   * - Continually builds a `formathelp` string that lists all formats successfully instantiated.
+   * - Returns an object containing both the instantiated formats and the help string.
+   *
+   * Notes:
+   * - Uses `wicket.js` to handle WKT data due to its parsing stability compared to OpenLayers for this format.
+   * - Ensures debug logs are provided for tracing function execution when `debug` mode is active.
+   **************************************************************/
   function createLayersFormats() {
     if (debug) console.log(`${scriptName}: createLayersFormats() called`);
 
@@ -1298,6 +1522,112 @@ var geometries = function () {
     tryCreateFormat("GPX", OpenLayers.Format.GPX);
     tryCreateFormat("GML", OpenLayers.Format.GML);
     return { formats, formathelp };
+  }
+
+  function addGroupToggler(isDefault, layerSwitcherGroupItemName, layerGroupVisibleName) {
+    if (debug) console.log(`${scriptName}: addGroupToggler() called`);
+
+    var group;
+    if (isDefault === true) {
+      group = document.getElementById(layerSwitcherGroupItemName).parentElement.parentElement;
+    } else {
+      var layerGroupsList = document.getElementsByClassName("list-unstyled togglers")[0];
+      group = document.createElement("li");
+      group.className = "group";
+
+      var togglerContainer = document.createElement("div");
+      togglerContainer.className = "layer-switcher-toggler-tree-category";
+
+      var groupButton = document.createElement("wz-button");
+      groupButton.color = "clear-icon";
+      groupButton.size = "xs";
+
+      var iCaretDown = document.createElement("i");
+      iCaretDown.className = "toggle-category w-icon w-icon-caret-down";
+      iCaretDown.dataset.groupId = layerSwitcherGroupItemName.replace("layer-switcher-", "").toUpperCase();
+
+      var togglerSwitch = document.createElement("wz-toggle-switch");
+      togglerSwitch.className = layerSwitcherGroupItemName + " hydrated";
+      togglerSwitch.id = layerSwitcherGroupItemName;
+      togglerSwitch.checked = true;
+
+      var label = document.createElement("label");
+      label.className = "label-text";
+      label.htmlFor = togglerSwitch.id;
+
+      var togglerChildrenList = document.createElement("ul");
+      togglerChildrenList.className = "collapsible-" + layerSwitcherGroupItemName.replace("layer-switcher-", "").toUpperCase();
+      label.appendChild(document.createTextNode(layerGroupVisibleName));
+      groupButton.addEventListener("click", layerTogglerGroupMinimizerEventHandler(iCaretDown));
+      togglerSwitch.addEventListener("click", layerTogglerGroupMinimizerEventHandler(iCaretDown));
+      groupButton.appendChild(iCaretDown);
+      togglerContainer.appendChild(groupButton);
+      togglerContainer.appendChild(togglerSwitch);
+      togglerContainer.appendChild(label);
+      group.appendChild(togglerContainer);
+      group.appendChild(togglerChildrenList);
+      layerGroupsList.appendChild(group);
+    }
+
+    console.log(`${scriptName}: Group Toggler created for ${layerGroupVisibleName}`);
+    return group;
+  }
+
+  function addLayerToggler(groupToggler, layerName, layerObj) {
+    if (debug) console.log(`${scriptName}: addLayerToggler() called`);
+
+    var layer_container = groupToggler.getElementsByTagName("UL")[0];
+    var layerGroupCheckbox = groupToggler.getElementsByClassName("layer-switcher-toggler-tree-category")[0].getElementsByTagName("wz-toggle-switch")[0];
+    var toggler = document.createElement("li");
+    var togglerCheckbox = document.createElement("wz-checkbox");
+    togglerCheckbox.setAttribute("checked", "true");
+
+    // Generate ID for togglerCheckbox using layerName
+    var togglerId = layerName.replace(/[^a-z0-9_-]/gi, "_");
+    togglerCheckbox.id = "t_" + togglerId;
+
+    togglerCheckbox.className = "hydrated";
+    togglerCheckbox.appendChild(document.createTextNode(layerName));
+    toggler.appendChild(togglerCheckbox);
+    layer_container.appendChild(toggler);
+    togglerCheckbox.addEventListener("change", layerTogglerEventHandler(layerObj));
+    layerGroupCheckbox.addEventListener("change", layerTogglerGroupEventHandler(togglerCheckbox, layerObj));
+    layerTogglerEventHandler(layerObj);
+    layerTogglerGroupEventHandler(togglerCheckbox, layerObj);
+
+    if (debug) console.log(`${scriptName}: Layer Toggler created for ${layerName}`);
+  }
+
+  function layerTogglerEventHandler(layerObj) {
+    return function () {
+      const isVisible = this.checked;
+      // Toggle the visibility of the layer
+      layerObj.setVisibility(isVisible);
+    };
+  }
+
+  function layerTogglerGroupEventHandler(groupCheckbox, layerObj) {
+    return function () {
+      // Determine if the layer should be visible based on the checkboxes
+      const shouldBeVisible = this.checked && groupCheckbox.checked;
+
+      // Set the layer's visibility directly
+      layerObj.setVisibility(shouldBeVisible);
+
+      // Optionally adjust checkbox behavior, depending on what you want
+      groupCheckbox.disabled = !this.checked;
+      if (!groupCheckbox.checked) {
+        groupCheckbox.disabled = false;
+      }
+    };
+  }
+
+  function layerTogglerGroupMinimizerEventHandler(iCaretDown) {
+    return function () {
+      const ulCollapsible = iCaretDown.closest("li").querySelector("ul");
+      iCaretDown.classList.toggle("upside-down");
+      ulCollapsible.classList.toggle("collapse-layer-switcher-group");
+    };
   }
 
   // Initialize your script
