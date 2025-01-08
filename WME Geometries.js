@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2024.12.29.01
+// @version             2025.01.08.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -24,7 +24,6 @@
 /********
  * TO DO LIST:
  *  1. Update Labels for line feachers for pathLabel? and pathLabelCurve?
- *  2. When adding via a geojson, KML file see if we can parse the oject atrabutes, and provide a user input to select the field to use for the labels. 
  *********/
 
 var geometries = function () {
@@ -38,15 +37,12 @@ var geometries = function () {
   let debug = false;
 
   let { formats, formathelp } = createLayersFormats();
-  let EPSG_4326 = new OpenLayers.Projection("EPSG:4326"); // lat,lon
-  let EPSG_4269 = new OpenLayers.Projection("EPSG:4269"); // NAD 83
-  let EPSG_3857 = new OpenLayers.Projection("EPSG:3857"); // WGS 84
 
   let layerindex = 0;
   let storedLayers = [];
   let groupToggler;
 
-  function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos) {
+  function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelattribute) {
     this.fileContent = fileContent;
     this.color = color;
     this.fileext = fileext;
@@ -57,6 +53,7 @@ var geometries = function () {
     this.linesize = linesize;
     this.linestyle = linestyle;
     this.labelpos = labelpos;
+    this.labelattribute = labelattribute;
   }
 
   /*************************************************************************************
@@ -184,33 +181,8 @@ var geometries = function () {
       inputfile.style.cursor = "pointer";
       inputfile.style.pointerEvents = "none"; // Prevents inputfile from capturing events
 
-      // Create the custom label
-      let customLabel = document.createElement("label");
-      customLabel.htmlFor = "GeometryFile";
-      customLabel.innerText = "Import GEO File";
-      customLabel.style.padding = "8px 0px";
-      customLabel.style.fontSize = "1rem";
-      customLabel.style.cursor = "pointer";
-      customLabel.style.border = "2px solid #8BC34A"; // Light green border
-      customLabel.style.borderRadius = "20px";
-      customLabel.style.backgroundColor = "#8BC34A"; // Light green background
-      customLabel.style.color = "white";
-      customLabel.style.display = "block";
-      customLabel.style.width = "100%";
-      customLabel.style.boxSizing = "border-box";
-      customLabel.style.textAlign = "center";
-      customLabel.style.transition = "background-color 0.3s, border-color 0.3s";
-
-      // Add hover effect for custom label
-      customLabel.addEventListener("mouseover", function () {
-        customLabel.style.backgroundColor = "#689F38"; // Slightly darker green
-        customLabel.style.borderColor = "#689F38";
-      });
-
-      customLabel.addEventListener("mouseout", function () {
-        customLabel.style.backgroundColor = "#8BC34A"; // Original green background
-        customLabel.style.borderColor = "#8BC34A";
-      });
+      // Create the custom label using the createButton function
+      let customLabel = createButton("Import GEO File", "#8BC34A", "#689F38", "label", "GeometryFile");
 
       // Append the input file and custom label to the container
       fileContainer.appendChild(inputfile);
@@ -223,7 +195,7 @@ var geometries = function () {
       inputfile.addEventListener("change", addGeometryLayer, false);
 
       let notes = document.createElement("p");
-      notes.innerHTML = "<b>Formats:</b> " + formathelp + "<br> <b>Coordinates:</b> EPSG:4326, EPSG:3857";
+      notes.innerHTML = "<b>Formats:</b> " + formathelp + "<br> <b>EPSG:</b> 4326 | 4269 | 3857 | 3035 | 4267 |";
       notes.style.color = "#555";
       notes.style.display = "block";
       notes.style.fontSize = "0.9em";
@@ -231,38 +203,12 @@ var geometries = function () {
       notes.style.marginBottom = "0px";
       geoform.appendChild(notes);
 
-      // Creates the State Boubdary Button
-      let inputstate = document.createElement("input");
-      inputstate.type = "button";
-      inputstate.value = "Draw State Boundary";
-      inputstate.title = "Draw the Boundary for the State in focus";
-      inputstate.style.padding = "8px 0px";
-      inputstate.style.fontSize = "1rem";
-      inputstate.style.border = "2px solid #87CEEB"; // Light blue border
-      inputstate.style.borderRadius = "20px";
-      inputstate.style.cursor = "pointer";
-      inputstate.style.backgroundColor = "#87CEEB"; // Light blue background
-      inputstate.style.color = "white";
-      inputstate.style.display = "block";
-      inputstate.style.width = "100%";
-      inputstate.style.boxSizing = "border-box";
-      inputstate.style.textAlign = "center";
-      inputstate.style.marginTop = "10px";
-      inputstate.style.transition = "background-color 0.3s, border-color 0.3s";
-
-      // Add hover effect for the state boundary button
-      inputstate.addEventListener("mouseover", function () {
-        inputstate.style.backgroundColor = "#5DADE2"; // Slightly darker blue
-        inputstate.style.borderColor = "#5DADE2";
-      });
-
-      inputstate.addEventListener("mouseout", function () {
-        inputstate.style.backgroundColor = "#87CEEB"; // Original blue background
-        inputstate.style.borderColor = "#87CEEB";
-      });
-
-      inputstate.addEventListener("click", drawStateBoundary);
-      geoform.appendChild(inputstate);
+      // Create the Draw State Boundary Button
+      let stateBoundaryButton = createButton("Draw State Boundary", "#87CEEB", "#4D9DD2", "input");
+      stateBoundaryButton.id = "stateBoundary_btn";
+      stateBoundaryButton.title = "Add boundary for Current Active State";
+      stateBoundaryButton.addEventListener("click", drawStateBoundary);
+      geoform.appendChild(stateBoundaryButton);
 
       // Create a container for the color, font size, and fill opacity input fields
       let inputContainer = document.createElement("div");
@@ -747,75 +693,100 @@ var geometries = function () {
       buttonContainer.style.display = "flex";
       buttonContainer.style.gap = "45px";
 
-      // Add the Import WKT Button
-      let submit_WKT_btn = document.createElement("input");
-      submit_WKT_btn.type = "button";
+      let submit_WKT_btn = createButton("Import WKT", "#8BC34A", "#689F38", "input");
       submit_WKT_btn.id = "submit_WKT_btn";
-      submit_WKT_btn.value = "Import WKT";
       submit_WKT_btn.title = "Import WKT Geometry to WME Layer";
-      submit_WKT_btn.style.padding = "8px 20px";
-      submit_WKT_btn.style.fontSize = "1rem";
-      submit_WKT_btn.style.border = "2px solid #8BC34A"; // Light green border
-      submit_WKT_btn.style.borderRadius = "20px";
-      submit_WKT_btn.style.cursor = "pointer";
-      submit_WKT_btn.style.backgroundColor = "#8BC34A"; // Light green background
-      submit_WKT_btn.style.color = "white";
-      submit_WKT_btn.style.boxSizing = "border-box";
-      submit_WKT_btn.style.transition = "background-color 0.3s, border-color 0.3s";
-      // Add hover effect for submit button
-      submit_WKT_btn.addEventListener("mouseover", function () {
-        submit_WKT_btn.style.backgroundColor = "#689F38"; // Darker green background on hover
-        submit_WKT_btn.style.borderColor = "#689F38"; // Darker green border on hover
-      });
-
-      submit_WKT_btn.addEventListener("mouseout", function () {
-        submit_WKT_btn.style.backgroundColor = "#8BC34A"; // Original green background
-        submit_WKT_btn.style.borderColor = "#8BC34A"; // Original green border
-      });
-
       submit_WKT_btn.addEventListener("click", draw_WKT);
       buttonContainer.appendChild(submit_WKT_btn);
 
-      // Add the Clear WKT Button
-      let clear_WKT_btn = document.createElement("input");
-      clear_WKT_btn.type = "button";
+      let clear_WKT_btn = createButton("Clear WKT", "#E57373", "#D32F2F", "input");
       clear_WKT_btn.id = "clear_WKT_btn";
-      clear_WKT_btn.value = "Clear WKT";
       clear_WKT_btn.title = "Clear WKT Geometry Input and Name";
-      clear_WKT_btn.style.padding = "8px 20px";
-      clear_WKT_btn.style.fontSize = "1rem";
-      clear_WKT_btn.style.border = "2px solid #E57373"; // Light red border
-      clear_WKT_btn.style.borderRadius = "20px";
-      clear_WKT_btn.style.cursor = "pointer";
-      clear_WKT_btn.style.backgroundColor = "#E57373"; // Light red background
-      clear_WKT_btn.style.color = "white";
-      clear_WKT_btn.style.boxSizing = "border-box";
-      clear_WKT_btn.style.transition = "background-color 0.3s, border-color 0.3s";
-      // Add hover effect for clear button
-      clear_WKT_btn.addEventListener("mouseover", function () {
-        clear_WKT_btn.style.backgroundColor = "#D32F2F"; // Darker red background
-        clear_WKT_btn.style.borderColor = "#D32F2F";
-      });
-
-      clear_WKT_btn.addEventListener("mouseout", function () {
-        clear_WKT_btn.style.backgroundColor = "#E57373"; // Original red background
-        clear_WKT_btn.style.borderColor = "#E57373";
-      });
-
       clear_WKT_btn.addEventListener("click", clear_WKT_input);
       buttonContainer.appendChild(clear_WKT_btn);
 
       wktContainer.appendChild(buttonContainer);
+      geoform.appendChild(wktContainer); // Append the container to the form
 
-      // Append the container to the form
-      geoform.appendChild(wktContainer);
+
+    // Add Toggle Button for Debug
+    let debugToggleContainer = document.createElement("div");
+    debugToggleContainer.style.display = "flex";
+    debugToggleContainer.style.alignItems = "center";
+    debugToggleContainer.style.marginTop = "15px";
+
+    let debugToggleLabel = document.createElement("label");
+    debugToggleLabel.style.marginRight = "10px";
+
+    const updateLabel = () => {
+      debugToggleLabel.innerText = `Debug mode ${debug ? 'ON' : 'OFF'}`;
+    };
+
+    let debugSwitchWrapper = document.createElement("label");
+    debugSwitchWrapper.style.position = "relative";
+    debugSwitchWrapper.style.display = "inline-block";
+    debugSwitchWrapper.style.width = "40px";
+    debugSwitchWrapper.style.height = "20px";
+    debugSwitchWrapper.style.border = "1px solid #ccc"; 
+    debugSwitchWrapper.style.borderRadius = "20px"; 
+
+    let debugToggleSwitch = document.createElement("input");
+    debugToggleSwitch.type = "checkbox";
+    debugToggleSwitch.style.opacity = "0"; 
+    debugToggleSwitch.style.width = "0";
+    debugToggleSwitch.style.height = "0";
+
+    let switchSlider = document.createElement("span");
+    switchSlider.style.position = "absolute";
+    switchSlider.style.cursor = "pointer";
+    switchSlider.style.top = "0";
+    switchSlider.style.left = "0";
+    switchSlider.style.right = "0";
+    switchSlider.style.bottom = "0";
+    switchSlider.style.backgroundColor = "#ccc";
+    switchSlider.style.transition = ".4s";
+    switchSlider.style.borderRadius = "20px";
+
+    let innerSpan = document.createElement("span");
+    innerSpan.style.position = "absolute";
+    innerSpan.style.height = "14px";
+    innerSpan.style.width = "14px";
+    innerSpan.style.left = "3px";
+    innerSpan.style.bottom = "3px";
+    innerSpan.style.backgroundColor = "white";
+    innerSpan.style.transition = ".4s";
+    innerSpan.style.borderRadius = "50%";
+
+    switchSlider.appendChild(innerSpan);
+
+    const updateSwitchState = () => {
+      switchSlider.style.backgroundColor = debug ? "#8BC34A" : "#ccc";
+      innerSpan.style.transform = debug ? "translateX(20px)" : "translateX(0)";
+    };
+
+    debugToggleSwitch.checked = debug;
+    updateLabel();
+    updateSwitchState();
+
+    debugToggleSwitch.addEventListener("change", () => {
+      debug = debugToggleSwitch.checked;
+      updateLabel();
+      updateSwitchState();
+      console.log(`${scriptName}: Debug mode is now ${debug ? 'enabled' : 'disabled'}`);
+    });
+
+    debugSwitchWrapper.appendChild(debugToggleSwitch);
+    debugSwitchWrapper.appendChild(switchSlider);
+    debugToggleContainer.appendChild(debugToggleLabel);
+    debugToggleContainer.appendChild(debugSwitchWrapper);
+    geoform.appendChild(debugToggleContainer);
+
 
       console.log(`${scriptName}: User Interface Loaded!`);
       // Log the OpenLayers version
       if (OpenLayers.VERSION_NUMBER) {
         if (debug) console.log(`${scriptName}: OpenLayers Version: ${OpenLayers.VERSION_NUMBER}`);
       }
-
       loadLayers();
     });
   }
@@ -846,7 +817,7 @@ var geometries = function () {
    *****************************************************************************/
   function draw_WKT() {
     // use wicket.js for all WKT as it is a more stable parser then the curren OpenLayer Version in WME
-    if (debug) console.log(`${scriptName}:  draw_WKT() from User Input called`);
+    if (debug) console.log(`${scriptName}:  draw_WKT(): Import WKT called`);
 
     // Add variables from Options input section to WKT input geo
     let color = document.getElementById("color").value;
@@ -895,31 +866,31 @@ var geometries = function () {
         },
       };
 
-      if (debug) console.info(`${scriptName}: WKT input successfuly converted to geoJSON`, geojsonData);
+      if (debug) console.log(`${scriptName}: draw_WKT(): WKT input successfuly converted to geoJSON`, geojsonData);
     } catch (error) {
-      if (debug) console.error(`${scriptName}:  Error converting WKT to GeoJSON`, error);
+      if (debug) console.error(`${scriptName}: draw_WKT(): Error converting WKT to GeoJSON`, error);
       WazeWrap.Alerts.error(scriptName, "Error converting WKT to GeoJSON");
       return;
     }
     // Construct and store the layer object
-    let geojson_to_layer_obj = new layerStoreObj(geojsonData, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+    let geojson_to_layer_obj = new layerStoreObj(geojsonData, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "Name");
     storedLayers.push(geojson_to_layer_obj);
 
     // Add the layer to the map and parse
     try {
       parseFile(geojson_to_layer_obj);
     } catch (error) {
-      if (debug) console.error(`${scriptName}: Error adding layer to map:`, error);
+      if (debug) console.error(`${scriptName}: draw_WKT(): Error adding layer to map:`, error);
       return;
     }
     // Compressed storage in localStorage
     try {
       localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
     } catch (error) {
-      if (debug) console.error(`${scriptName}: Error saving to localStorage`, error);
+      if (debug) console.error(`${scriptName}: draw_WKT(): Error saving to localStorage`, error);
       return;
     }
-    console.info(`${scriptName}: Stored WKT Input - ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
+    console.log(`${scriptName}: draw_WKT(): Stored WKT Input - ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
   }
 
   /*******************************************************************************
@@ -991,7 +962,7 @@ var geometries = function () {
       return;
     }
 
-    let state_obj = new layerStoreObj(state_geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+    let state_obj = new layerStoreObj(state_geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "Name");
     storedLayers.push(state_obj);
 
     if (debug) console.info(`${scriptName}: State _obj:`, state_obj);
@@ -1014,27 +985,24 @@ var geometries = function () {
    * and configuring the layer with specified styling options. The function also updates UI elements and handles storage
    * of the layer information.
    *
-   * Parameters:
-   * - This function does not take explicit parameters, but it relies on DOM elements for file input and styling options.
-   *
-   * Behavior:
-   * - Retrieves a file from the user's input and extracts necessary metadata such as the filename and file extension.
-   * - Gathers styling options from the DOM input elements (e.g., color, opacity, line style).
-   * - Sanitizes and prepares a list item in the UI to reflect the status of the file processing.
-   * - Validates file format support and utilizes a `FileReader` to process the file asynchronously.
-   * - Handles WKT files by reading each line as individual geometries and converting them to separate GeoJSON features.
-   *   Creates a GeoJSON FeatureCollection with each line represented as distinctive features for flexible layer manipulation.
-   * - Constructs a `fileObj` with all necessary data and style properties for each geometry, encapsulating each converted
-   *   feature into the feature collection.
-   * - Parses the file object through `parseFile` to create visual layers on the map for each feature.
-   * - Updates local storage with compressed data for persistence of the newly added layers.
+   * Process:
+   * - Initializes by logging the function invocation if debugging is enabled.
+   * - Captures a file from a user's file input and determines its extension and name.
+   * - Collects styling and configuration options from the user interface through DOM elements.
+   * - Validates user-selected file format against supported formats, handling any unsupported formats with an error message.
+   * - Leverages a `FileReader` to asynchronously read the file's contents.
+   * - For WKT files, reads each line individually, converting them into separate GeoJSON features, creating a versatile
+   *   GeoJSON FeatureCollection for map integration.
+   * - Constructs a `fileObj` containing converted data, styling, and format information for the specified file.
+   * - Calls `parseFile` to interpret `fileObj`, creating and configuring the geometry layers on the map.
+   * - Updates persistent storage with compressed data to save the state of added geometrical layers.
    *
    * Notes:
-   * - Depends on the accurate setup of global context variables and elements like `geolist` and `storedLayers` for successful execution.
-   * - Provides extensive logging details if the `debug` flag is enabled, aiding in the troubleshooting and validation process.
+   * - Operates within a larger system context, relying on global variables such as `formats` for file format validation.
+   * - Incorporates detailed logging when debugging is active to assist in troubleshooting and confirming function success.
    *************************************************************************/
   function addGeometryLayer() {
-    if (debug) console.log(`${scriptName}: addGeometryLayer() called`);
+    if (debug) console.log(`${scriptName}: addGeometryLayer(): called`);
 
     let fileList = document.getElementById("GeometryFile");
     let file = fileList.files[0];
@@ -1052,127 +1020,34 @@ var geometries = function () {
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
-    let fileitem = document.getElementById(filename.replace(/[^a-z0-9_-]/gi, "_"));
-    if (!fileitem) {
-      fileitem = document.createElement("li");
-      fileitem.id = filename.replace(/[^a-z0-9_-]/gi, "_");
-
-      // Style the list item
-      fileitem.style.position = "relative";
-      fileitem.style.padding = "2px 2px";
-      fileitem.style.margin = "2px 0"; // Adjust margin to be smaller
-      fileitem.style.background = "transparent";
-      fileitem.style.borderRadius = "3px";
-      fileitem.style.display = "flex";
-      fileitem.style.justifyContent = "space-between";
-      fileitem.style.alignItems = "center";
-      fileitem.style.transition = "background 0.2s";
-      fileitem.style.fontSize = "0.95em";
-
-      // Add hover effect
-      fileitem.addEventListener("mouseover", function () {
-        fileitem.style.background = "#eaeaea";
-      });
-      fileitem.addEventListener("mouseout", function () {
-        fileitem.style.background = "transparent";
-      });
-
-      geolist.appendChild(fileitem);
-    }
-
-    let fileText = document.createElement("span");
-    fileText.style.color = color;
-    fileText.innerHTML = "Loading...";
-    fileText.style.flexGrow = "1";
-    fileText.style.lineHeight = "1";
-    fileText.style.fontSize = "0.95em";
-    fileitem.appendChild(fileText);
-
-    // Remove button
-    let removeButton = document.createElement("button");
-    removeButton.style.cursor = "pointer";
-    removeButton.style.backgroundColor = "#E57373"; // Light red background
-    removeButton.style.color = "white";
-    removeButton.style.border = "none";
-    removeButton.style.padding = "0px 0px 0px 0px"; // Adjust padding to be smaller
-    removeButton.style.borderRadius = "3px";
-    removeButton.innerHTML = "X";
-    removeButton.style.fontSize = "1.0em";
-    removeButton.style.width = "16px"; // Make button square
-    removeButton.style.height = "16px"; // Make button square
-    removeButton.style.marginLeft = "3px"; // Add some spacing from the text
-    removeButton.addEventListener("click", () => removeGeometryLayer(filename));
-    fileitem.appendChild(removeButton);
-
     // Check if format is supported
     let parser = formats[fileext];
     if (typeof parser == "undefined") {
-      fileitem.innerHTML = fileext + " format not supported :(";
-      fileitem.style.color = "red";
+      console.error(`${scriptName}: addGeometryLayer(): ${fileext} format not supported :(`);
+      WazeWrap.Alerts.error(scriptName, `${fileext} format not supported :(`);
       return;
     }
 
     let reader = new FileReader();
-    reader.onload = (function (theFile) {
-      return function (e) {
-        requestAnimationFrame(() => {
+    reader.onload = function (e) {
+      requestAnimationFrame(() => {
+        try {
           let fileObj;
-
-          // Process to convert WKT files into a GeoJSON format with each line as a separate feature.
           if (fileext === "WKT") {
             if (debug) console.log(`${scriptName}: WKT file detected, converting each line to individual GeoJSON features...`);
-
-            let wktContent = e.target.result;
-            let wktLines = wktContent
-              .split("\n")
-              .map((line) => line.trim())
-              .filter((line) => line.length > 0);
-
-            if (wktLines.length === 0) {
-              return;
-            }
-
-            let features = []; // To hold each GeoJSON feature
-
-            // Process each WKT line into separate GeoJSON features
-            wktLines.forEach((line, index) => {
-              let wktObj = new Wkt.Wkt();
-              try {
-                wktObj.read(line);
-                let geoJsonGeometry = wktObj.toJson();
-                let feature = {
-                  type: "Feature",
-                  geometry: geoJsonGeometry,
-                  properties: {
-                    name: `${filename}`, // Naming feature based on file name and index
-                  },
-                };
-                features.push(feature); // Add the feature to the features array
-              } catch (error) {
-                console.error(`${scriptName}: Error parsing WKT line:`, line, error);
-              }
-            });
-
-            // Create a GeoJSON FeatureCollection with all features
-            let geojsonData = {
-              type: "FeatureCollection",
-              features: features,
-            };
-
-            if (debug) console.log(`${scriptName}: All WKT lines converted to separate GeoJSON features:`, geojsonData);
-            fileObj = new layerStoreObj(geojsonData, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+            let WKTtogGeojson = convertWKTToGeoJSON(e.target.result, filename);
+            fileObj = new layerStoreObj(WKTtogGeojson, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
           } else {
             fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
           }
 
-          // Add the resulting object to stored layers and update map.
-          storedLayers.push(fileObj);
-          parseFile(fileObj);
-          localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
-          console.info(`${scriptName}: stored file - ${fileitem.id} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
-        });
-      };
-    })(file);
+          parseFile(fileObj); // Call parseFile directly
+        } catch (error) {
+          console.error(`${scriptName}: addGeometryLayer(): Error processing file:`, error);
+          WazeWrap.Alerts.error(scriptName, `Error processing file :(`);
+        }
+      });
+    };
     reader.readAsText(file);
   }
 
@@ -1180,230 +1055,526 @@ var geometries = function () {
    * parseFile
    *
    * Description:
-   * This function processes a file object containing geographic data, formats and styles it, and adds it as a vector layer
-   * to the map. It updates the User Interface (UI) with a list item reflecting the file's loading status and handles
-   * additional label formatting based on the file's attributes.
+   * Processes a file object containing geographic data, formats, and styles it, adding the result as a vector layer
+   * to the map. The function updates the User Interface (UI) to reflect the file loading status and handles
+   * labeling configurations based on attribute selection within the file's data.
    *
    * Parameters:
-   * @param {Object} fileObj - An object containing the data and metadata of the file to be parsed.
-   *   - {string} fileObj.filename - Name of the file.
-   *   - {string} fileObj.fileext - File extension used to determine the parser to use.
-   *   - {string} fileObj.fileContent - The content of the file.
-   *   - {string} fileObj.color - Color setting for layer styling.
+   * @param {Object} fileObj - An object containing data and metadata for the file to be parsed.
+   *   - {string} fileObj.filename - Name of the file processed.
+   *   - {string} fileObj.fileext - File extension, used to determine the appropriate parser.
+   *   - {string} fileObj.fileContent - Raw content of the file.
+   *   - {string} fileObj.color - Specifies the color styling for the layer.
    *   - {number} fileObj.lineopacity, fileObj.linesize, fileObj.linestyle - Line styling settings.
-   *   - {number} fileObj.fillOpacity - Opacity setting for filled areas.
-   *   - {number} fileObj.fontsize - Font size for labeling.
-   *   - {string} fileObj.labelpos - Anchor position for labels.
+   *   - {number} fileObj.fillOpacity - Opacity for filled areas.
+   *   - {number} fileObj.fontsize - Font size for labeling purposes.
+   *   - {string} fileObj.labelpos - Anchor position for any labels.
    *
    * Behavior:
-   * - Logs debug information if debugging is enabled.
-   * - Configures style settings for the vector layer based on the properties of `fileObj`.
-   * - Determines parser based on the file's extension and sets the projection accordingly.
-   * - Parses the file content and extracts features, handling errors by logging them.
-   * - Evaluates feature attributes to find a label attribute if the number of features allows it.
-   * - Creates and styles a vector layer, adds it to the map, and manages labeling.
-   * - Updates or creates a corresponding list item in the UI to reflect file loading status.
-   * - Utilizes the global context including `W.map` for map operations and `geolist` for UI operations.
+   * - Outputs debug information if debugging is activated.
+   * - Establishes style configurations for the vector layer using properties defined in `fileObj`.
+   * - Determines the correct parser to use based on the file's extension, setting projections appropriately.
+   * - Attempts to parse the file content into geographic features, logging any errors encountered.
+   * - If the file's attribute contains a previously set label attribute, it proceeds to create a styled layer with labels.
+   * - For files without a pre-defined label attribute, it offers an interface for user selection from the attributes.
+   * - Constructs the vector layer, styles, and integrates it onto the map, managing labels based on user input or default settings.
+   * - Updates the UI list items to reflect the status and details of loading the file.
+   *
+   * Notes:
+   * - Heavily relies on global context elements like `W.map` for projections and map management, and `geolist` for UI maintenance.
+   * - Provides detailed debug logs when the debug flag is active, aiding in troubleshooting and validating process steps.
    ***************************************************************************************/
   function parseFile(fileObj) {
-    if (debug) console.log(`${scriptName}: parseFile(fileObj) called`);
+    if (debug) console.log(`${scriptName}: parseFile(): called`, fileObj);
+    const fileext = fileObj.fileext.toUpperCase();
+    const fileContent = fileObj.fileContent;
+    const filename = fileObj.filename;
+    const parser = formats[fileext];
 
-    if (debug) console.log(`${scriptName}: fileObj:`, fileObj);
-
-    let layerStyle = {
-      strokeColor: fileObj.color,
-      strokeOpacity: fileObj.lineopacity,
-      strokeWidth: fileObj.linesize,
-      strokeDashstyle: fileObj.linestyle,
-      fillColor: fileObj.color,
-      fillOpacity: fileObj.fillOpacity,
-      pointRadius: fileObj.fontsize,
-      fontColor: fileObj.color,
-      fontSize: fileObj.fontsize,
-      labelOutlineColor: "black",
-      labelOutlineWidth: fileObj.fontsize / 4,
-      labelAlign: fileObj.labelpos,
-      //labelXOffset: 0,
-      //labelYOffset: 0,
-      label: "${formatLabel}", // Your existing label formatting function
-      //pathLabel: "${formatLabel}", // Attempt path labeling
-      //pathLabelCurve: true, // Use the curve flag for path following
-      //pathLabelReadable: true, // Ensures label is readable without inversion
-    };
-
-    let fileext = fileObj.fileext.toUpperCase();
-    let fileContent = fileObj.fileContent;
-    let filename = fileObj.filename;
-    let parser = formats[fileext]; // Ensure extension is uppercase for consistency
+    let EPSG_4326 = new OpenLayers.Projection("EPSG:4326"); // WGS 84
+    let EPSG_4269 = new OpenLayers.Projection("EPSG:4269"); // NAD 83
+    let EPSG_3857 = new OpenLayers.Projection("EPSG:3857"); // Web Mercator
+    let EPSG_3035 = new OpenLayers.Projection("EPSG:3035"); // ETRS89 / LAEA Europe
+    let EPSG_4267 = new OpenLayers.Projection("EPSG:4267"); // NAD 27
+    let EPSG_28356 = new OpenLayers.Projection("EPSG:28356"); // GDA94 / MGA zone 56
 
     if (!parser) {
-      console.error(`${scriptName}: No parser found for format: ${fileext}`);
+      console.error(`${scriptName}: parseFile(): No parser found for format: ${fileext}`);
       return;
     }
 
+    // Assign internalProjection
     parser.internalProjection = W.map.getProjectionObject();
+
+    // Default external projection
     parser.externalProjection = EPSG_4326;
 
+    // Modify the external projection based on detected EPSG codes
     if (/"EPSG:3857"/.test(fileContent) || /:EPSG::3857"/.test(fileContent)) {
       parser.externalProjection = EPSG_3857;
     } else if (/"EPSG:4269"/.test(fileContent) || /:EPSG::4269"/.test(fileContent)) {
       parser.externalProjection = EPSG_4269;
+    } else if (/"EPSG:3035"/.test(fileContent) || /:EPSG::3035"/.test(fileContent)) {
+      parser.externalProjection = EPSG_3035;
+    } else if (/"EPSG:4267"/.test(fileContent) || /:EPSG::4267"/.test(fileContent)) {
+      parser.externalProjection = EPSG_4267;
+    } else if (/"EPSG:28356"/.test(fileContent) || /:EPSG::28356"/.test(fileContent)) {
+      parser.externalProjection = EPSG_28356;
     }
+
+    if (debug) console.log(`${scriptName}: parseFile(): External projection is: ${parser.externalProjection}`);
 
     let features;
     try {
       features = parser.read(fileContent);
+      if (debug) console.log(`${scriptName}: parseFile(): Found ${features.length} features for ${filename}.`);
     } catch (error) {
-      console.error(`${scriptName}: Error parsing file content for ${filename}:`, error);
-      return; // Exit the function if parsing fails
+      console.error(`${scriptName}: parseFile(): Error parsing file content for ${filename}:`, error);
+      WazeWrap.Alerts.error(scriptName, `Error parsing file content for ${filename}: ${error}`);
+      return;
     }
 
-    let labelwith = "(no labels)";
-    let labelAttribute = "";
-
-    // Declare WME_Geometry outside of the conditional block
-    let WME_Geometry;
-
-    // Check if there are any features
-    if (features.length > 0) {
-      // Log the total number of features
-      if (debug) console.log(`${scriptName}: Number of features: ${features.length}`);
-
-      // Check if the number of features is within the label limit
-      if (features.length <= maxlabels) {
-        if (debug) console.log(`${scriptName}: Processing features for labeling, within max labels limit: ${maxlabels}`);
-
-        // Iterate over each attribute of the first feature
-        for (let attrib in features[0].attributes) {
-          // Log the current attribute being evaluated
-          if (debug) console.log(`${scriptName}: Evaluating attribute '${attrib}' for labeling`);
-
-          // Test if the attribute matches the label name pattern
-          if (labelname.test(attrib.toLowerCase())) {
-            if (debug) console.log(`${scriptName}: Attribute '${attrib}' matches label pattern`);
-
-            // Check if the attribute value is a string
-            if (typeof features[0].attributes[attrib] === "string") {
-              if (debug) console.log(`${scriptName}: Attribute '${attrib}' is a string, and will be used for object labels`);
-
-              labelwith = "Attribute used for Labels: " + attrib;
-              labelAttribute = attrib;
-
-              break;
-            } else {
-              if (debug) console.log(`${scriptName}: Attribute '${attrib}' is NOT a string type`);
-            }
-          } else {
-            // Log if the attribute does not match
-            if (debug) console.log(`${scriptName}: Attribute '${attrib}' does not match the label pattern`);
+    if (fileObj.labelattribute) {
+      createLayerWithLabel(fileObj, features, parser.externalProjection); // Use the stored label attribute if it already exists
+    } else {
+      // Await user interaction to get the label attribute when it's not already set
+      presentFeaturesAttributes(features.slice(0, 9))
+        .then((selectedAttribute) => {
+          if (selectedAttribute) {
+            //&& typeof features[0].attributes[selectedAttribute] === "string"
+            fileObj.labelattribute = selectedAttribute;
+            console.log(`${scriptName}: parseFile(): labelattribute selected: ${fileObj.labelattribute}`);
+            createLayerWithLabel(fileObj, features, parser.externalProjection);
           }
+        })
+        .catch((cancelReason) => {
+          console.warn(`${scriptName}: parseFile(): User cancelled attribute selection: ${cancelReason}`);
+        });
+    }
+
+    if (debug) console.log(`${scriptName}: parseFile() finished.`);
+  }
+
+  /******************************************************************************************
+   * createLayerWithLabel
+   *
+   * Description:
+   * Configures and adds a new vector layer to the map, applying styling and labeling
+   * based on attributes from the geographic features. This function manages the styling
+   * context, constructs the layer, updates the UI with toggler controls, and stores the
+   * layer data in local storage to preserve state across sessions.
+   *
+   * Parameters:
+   * @param {Object} fileObj - Object containing metadata and styling options for the layer.
+   *   - {string} fileObj.filename - The name of the file, used for layer identification.
+   *   - {string} fileObj.color - Color used for styling the layer.
+   *   - {number} fileObj.lineopacity, fileObj.linesize, fileObj.linestyle - Line styling configurations.
+   *   - {number} fileObj.fillOpacity - Opacity for the fill area of geometries.
+   *   - {number} fileObj.fontsize - Size for point or label fonts.
+   *   - {string} fileObj.labelattribute - Attribute for labeling features.
+   *   - {string} fileObj.labelpos - Position for label text alignment.
+   * @param {Array} features - The geographic features to be added to the layer.
+   * @param {Object} externalProjection - The projection object for feature coordinates.
+   *
+   * Behavior:
+   * - Constructs a label context to format and place labels based on feature attributes.
+   * - Defines layer styling using attributes from `fileObj` and assigns a context for labels.
+   * - Creates a new vector layer, setting its unique ID and z-index.
+   * - Styles the layer using a `StyleMap` and adds the provided features to it.
+   * - Checks for duplicates in stored layers, updating local storage if the layer is new.
+   * - Registers the layer with a group toggler for UI visibility control.
+   * - Appends the layer to the main map while managing toggling and list updates.
+   *****************************************************************************************/
+  function createLayerWithLabel(fileObj, features, externalProjection) {
+    if (debug) console.log(`${scriptName}: createLayerWithLabel(): Called`);
+
+    toggleLoadingMessage(true);
+
+    const delayDuration = 300;
+    // need to add a little timeout to give the loading message time to draw on screen
+    setTimeout(() => {
+      try {
+        let labelContext = {
+          formatLabel: function (feature) {
+            return feature.attributes[fileObj.labelattribute]?.replace(/\|/g, "\n") || "";
+          },
+        };
+
+        const layerStyle = {
+          strokeColor: fileObj.color,
+          strokeOpacity: fileObj.lineopacity,
+          strokeWidth: fileObj.linesize,
+          strokeDashstyle: fileObj.linestyle,
+          fillColor: fileObj.color,
+          fillOpacity: fileObj.fillOpacity,
+          pointRadius: fileObj.fontsize,
+          fontColor: fileObj.color,
+          fontSize: fileObj.fontsize,
+          labelOutlineColor: "black",
+          labelOutlineWidth: fileObj.fontsize / 4,
+          labelAlign: fileObj.labelpos,
+          label: "${formatLabel}",
+        };
+
+        let defaultStyle = new OpenLayers.Style(layerStyle, { context: labelContext });
+        let layerid = `wme_geometry_${layerindex}`;
+
+        let WME_Geometry = new OpenLayers.Layer.Vector(`Geometry: ${fileObj.filename}`, {
+          rendererOptions: { zIndexing: true },
+          uniqueName: layerid,
+          layerGroup: "wme_geometry",
+        });
+
+        WME_Geometry.setZIndex(-9999);
+        I18n.translations[I18n.locale].layers.name[layerid] = `WME Geometries: ${fileObj.filename}`;
+        WME_Geometry.styleMap = new OpenLayers.StyleMap(defaultStyle);
+        WME_Geometry.addFeatures(features);
+
+        if (debug) console.log(`${scriptName}: createLayerWithLabel(): Using OpenLayers version: ${OpenLayers.VERSION_NUMBER}`);
+        if (debug) console.log(`${scriptName}: createLayerWithLabel(): New OL Geometry Object:`, WME_Geometry);
+
+        const existingLayer = storedLayers.find((layer) => layer.filename === fileObj.filename);
+
+        if (!existingLayer) {
+          storedLayers.push(fileObj);
+          localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
+          console.info(`${scriptName}: createLayerWithLabel(): Stored file - ${fileObj.filename} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
+        } else {
+          console.log(`${scriptName}: createLayerWithLabel(): Skipping duplicate storage for file: ${fileObj.filename}`);
         }
-      } else {
-        // Log if the number of features exceeds the max label limit
-        if (debug) console.log(`${scriptName}: Features exceed max labels limit, no labeling applied: ${maxlabels}`);
+
+        if (!groupToggler) {
+          groupToggler = addGroupToggler(false, "layer-switcher-group_wme_geometries", "WME Geometries");
+        }
+
+        addToGeoList(fileObj.filename, fileObj.color, fileObj.fileext, fileObj.labelattribute, externalProjection);
+        addLayerToggler(groupToggler, fileObj.filename, WME_Geometry);
+        W.map.addLayer(WME_Geometry);
+        if (debug) console.log(`${scriptName}: createLayerWithLabel(): New Layer ${fileObj.filename} Added`);
+      } finally {
+        toggleLoadingMessage(false);
       }
-      let labelContext = {
-        formatLabel: function (feature) {
-          if (labelAttribute && feature.attributes.hasOwnProperty(labelAttribute)) {
-            let labelValue = feature.attributes[labelAttribute];
-            labelValue = labelValue.replace(/\|/g, "\n");
-            return labelValue;
-          } else {
-            return "";
-          }
-        },
+    }, delayDuration);
+  }
+
+  function toggleLoadingMessage(show) {
+    const existingMessage = document.getElementById("WMEGeoLoadingMessage");
+
+    if (show) {
+      if (!existingMessage) {
+        const loadingMessage = document.createElement("div");
+        loadingMessage.id = "WMEGeoLoadingMessage";
+        loadingMessage.style = `
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          padding: 16px 32px;
+          background: rgba(0, 0, 0, 0.7);
+          border-radius: 12px;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+          font-family: 'Arial', sans-serif;
+          font-size: 1.1rem;
+          text-align: center;
+          z-index: 2000;
+          color: #ffffff;
+          border: 2px solid #ff5733;
+        `;
+        loadingMessage.textContent = "New Geometries Loading, please wait...";
+        document.body.appendChild(loadingMessage);
+      }
+    } else {
+      if (existingMessage) {
+        existingMessage.remove();
+      }
+    }
+  }
+
+  /**********************************************************************************************************
+   * presentFeaturesAttributes
+   *
+   * Description:
+   * Displays a user interface to facilitate the selection of an attribute from a set of geographic features.
+   * If there is only one attribute, it automatically resolves with that attribute. Otherwise, it presents a modal
+   * dialog with a dropdown list for the user to select the label attribute.
+   *
+   * Parameters:
+   * @param {Array} features - An array of feature objects, each containing a set of attributes to choose from.
+   *
+   * Returns:
+   * @returns {Promise} - A promise that resolves with the chosen attribute or rejects if the user cancels.
+   *
+   * Behavior:
+   * - Immediately resolves if there is only one attribute across all features.
+   * - Constructs a modal dialog centrally positioned on the screen to display feature properties.
+   * - Iterates over the provided features, listing the attributes for each feature in a scrollable container.
+   * - Utilizes a dropdown (`select` element) populated with the attributes for user selection.
+   * - Includes "Import" and "Cancel" buttons to either resolve the promise with the selected attribute
+   *   or reject the promise, respectively.
+   * - Ensures modal visibility with a semi-transparent overlay backdrop.
+   *****************************************************************************************************/
+  function presentFeaturesAttributes(features) {
+    return new Promise((resolve, reject) => {
+      // Check if there is only one attribute across all features
+      const firstFeature = features[0];
+      const attributes = Object.keys(firstFeature.attributes);
+
+      if (attributes.length === 1) {
+        // If there is exactly one attribute, use it as the Label
+        resolve(attributes[0]);
+        return; // Exit the function early
+      }
+
+      let attributeInput = document.createElement("div");
+      attributeInput.style = "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background: #fff; border: 3px solid #ccc; border-radius: 5%; display: flex; flex-direction: column;";
+
+      let title = document.createElement("h3");
+      title.textContent = "Feature Attributes";
+      title.style = "margin-bottom: 5px; color: #333; align-self: center;";
+      attributeInput.appendChild(title);
+
+      let propsContainer = document.createElement("div");
+      propsContainer.style = "overflow-y: auto; max-height: 300px; padding: 5px;";
+      attributeInput.appendChild(propsContainer);
+
+      features.forEach((feature, index) => {
+        let featureHeader = document.createElement("h4");
+        featureHeader.textContent = `Feature ${index + 1}`;
+        featureHeader.style = "color: #555;";
+        propsContainer.appendChild(featureHeader);
+
+        let propsList = document.createElement("ul");
+        Object.keys(feature.attributes).forEach((key) => {
+          let propItem = document.createElement("li");
+          propItem.innerHTML = `<span style="color: blue;">${key}</span>: ${feature.attributes[key]}`;
+          propItem.style = "list-style-type: none; padding: 2px;";
+          propsList.appendChild(propItem);
+        });
+        propsContainer.appendChild(propsList);
+      });
+
+      let inputLabel = document.createElement("label");
+      inputLabel.textContent = "Select Attributes to use for Label:";
+      inputLabel.style = "display: block; margin-top: 15px;";
+      attributeInput.appendChild(inputLabel);
+
+      // Create a dropdown (select box) instead of text input
+      let selectBox = document.createElement("select");
+      selectBox.style = "width: 100%; padding: 8px; margin-top: 5px;";
+
+      // Populate the dropdown with the list of attributes
+      attributes.forEach((attribute) => {
+        let option = document.createElement("option");
+        option.value = attribute;
+        option.textContent = attribute;
+        selectBox.appendChild(option);
+      });
+      attributeInput.appendChild(selectBox);
+
+      let buttonsContainer = document.createElement("div");
+      buttonsContainer.style = "margin-top: 10px; display: flex; justify-content: flex-end;";
+
+      let closeButton = createButton("Import", "#8BC34A", "#689F38", "button");
+      closeButton.onclick = () => {
+        document.body.removeChild(overlay);
+        resolve(selectBox.value);
       };
 
-      let defaultStyle = new OpenLayers.Style(layerStyle, { context: labelContext });
+      let cancelButton = createButton("Cancel", "#E57373", "#D32F2F", "button");
+      cancelButton.onclick = () => {
+        document.body.removeChild(overlay);
+        reject("Operation cancelled by the user");
+      };
 
-      let layerid = "wme_geometry_" + layerindex;
-      WME_Geometry = new OpenLayers.Layer.Vector("Geometry: " + filename, {
-        rendererOptions: { zIndexing: true },
-        uniqueName: layerid,
-        layerGroup: "wme_geometry",
-      });
+      buttonsContainer.appendChild(closeButton);
+      buttonsContainer.appendChild(cancelButton);
+      attributeInput.appendChild(buttonsContainer);
 
-      WME_Geometry.setZIndex(-9999);
-      I18n.translations[I18n.locale].layers.name[layerid] = "WME Geometries: " + filename;
-      WME_Geometry.styleMap = new OpenLayers.StyleMap(defaultStyle);
-      WME_Geometry.addFeatures(features);
+      let overlay = document.createElement("div");
+      overlay.id = "presentFeaturesAttributesOverlay"; // Assign an ID to the overlay
+      overlay.style = "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;";
+      overlay.appendChild(attributeInput);
 
-      if (debug) console.log(`${scriptName}: New WME_Geometry Object:`, WME_Geometry);
-      if (!groupToggler) {
-        groupToggler = addGroupToggler(false, "layer-switcher-group_wme_geometries", "WME Geometries");
-      }
-      addLayerToggler(groupToggler, filename, WME_Geometry);
-      W.map.addLayer(WME_Geometry); // Addes new Layer to WME
-    }
+      document.body.appendChild(overlay);
+    });
+  }
 
-    let liObj = document.getElementById(filename.replace(/[^a-z0-9_-]/gi, "_"));
-    if (!liObj) {
-      liObj = document.createElement("li");
-      liObj.id = filename.replace(/[^a-z0-9_-]/gi, "_");
+  /****************************************************************************************
+   * convertWKTToGeoJSON
+   *
+   * Description:
+   * Converts Well-Known Text (WKT) string content into a GeoJSON FeatureCollection. Each line of WKT is interpreted
+   * as an individual feature, converted into GeoJSON format, and collected into a single FeatureCollection object.
+   * This function also handles errors in WKT parsing by logging them and excluding problematic lines from the result.
+   *
+   * Parameters:
+   * @param {string} wktContent - The raw WKT content with each geometry separated by a newline.
+   * @param {string} filename - The name of the file being processed, used to label features.
+   *
+   * Returns:
+   * @returns {Object} - A GeoJSON FeatureCollection composed of features converted from the WKT lines.
+   *
+   * Behavior:
+   * - Splits the WKT content into individual lines and trims whitespace.
+   * - Filters out any empty lines to ensure only valid data is processed.
+   * - Attempts to parse each line into a GeoJSON geometry, wrapping it in a feature with a property referencing the filename.
+   * - Logs parsing errors for any line that cannot be converted, continuing with the rest.
+   * - Collects all successfully parsed features into a FeatureCollection, excluding any null results from errors.
+   *******************************************************************************************/
+  function convertWKTToGeoJSON(wktContent, filename) {
+    let wktLines = wktContent
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
 
-      // Style the list item
-      liObj.style.position = "relative";
-      liObj.style.padding = "2px 2px";
-      liObj.style.margin = "2px 0"; // Adjust margin to be smaller
-      liObj.style.background = "transparent";
-      liObj.style.borderRadius = "3px";
-      liObj.style.display = "flex";
-      liObj.style.justifyContent = "space-between";
-      liObj.style.alignItems = "center";
-      liObj.style.transition = "background 0.2s";
-      liObj.style.fontSize = "0.95em";
-
-      // Add hover effect
-      liObj.addEventListener("mouseover", function () {
-        liObj.style.background = "#eaeaea";
-      });
-      liObj.addEventListener("mouseout", function () {
-        liObj.style.background = "transparent";
-      });
-
-      let span = document.createElement("span");
-      span.style.color = fileObj.color;
-      span.innerHTML = "Loading...";
-      span.style.flexGrow = "1";
-      span.style.lineHeight = "1";
-      span.style.fontSize = "0.95em";
-      liObj.appendChild(span);
-
-      // Remove button
-      let removeButton = document.createElement("button");
-      removeButton.style.cursor = "pointer";
-      removeButton.style.backgroundColor = "#E57373"; // Light red background
-      removeButton.style.color = "white";
-      removeButton.style.border = "none";
-      removeButton.style.padding = "0px 0px 0px 0px";
-      removeButton.style.borderRadius = "3px";
-      removeButton.innerHTML = "X";
-      removeButton.style.fontSize = "1.0em";
-      removeButton.style.width = "16px";
-      removeButton.style.height = "16px";
-      removeButton.style.marginLeft = "3px";
-      removeButton.addEventListener("click", () => removeGeometryLayer(filename));
-      liObj.appendChild(removeButton);
-
-      geolist.appendChild(liObj);
-    }
-
-    requestAnimationFrame(() => {
-      let spanObj = liObj.querySelector("span");
-      if (features.length === 0) {
-        spanObj.innerHTML = "No features loaded :(";
-        spanObj.style.color = "red";
-        if (WME_Geometry) {
-          WME_Geometry.destroy();
+    let features = wktLines
+      .map((line) => {
+        try {
+          let wktObj = new Wkt.Wkt();
+          wktObj.read(line);
+          return {
+            type: "Feature",
+            geometry: wktObj.toJson(),
+            properties: { Name: `${filename}` },
+          };
+        } catch (error) {
+          console.error(`${scriptName}: Error parsing WKT line:`, line, error);
+          return null;
         }
-      } else {
-        spanObj.innerHTML = filename;
-        spanObj.title = `${fileext} ${parser.externalProjection.projCode}: ${features.length} features loaded\n${labelwith}`;
-        console.info(`${scriptName}: Loaded ${filename}.${fileext} ${parser.externalProjection.projCode}: ${features.length} features loaded\n${labelwith}`);
-      }
+      })
+      .filter((feature) => feature !== null);
+
+    return { type: "FeatureCollection", features: features };
+  }
+
+  /*************************************************************************************
+   * addToGeoList
+   *
+   * Description:
+   * Adds a new list item (representing a geographic file) to the UI's geographic file list. Each item displays the filename
+   * and includes a tooltip with additional file information, like file type, label attribute, and projection details.
+   * A remove button is also provided to delete the layer from the list and handle associated cleanup.
+   *
+   * Parameters:
+   * @param {string} filename - The name of the file, used as the display text and ID.
+   * @param {string} color - The color used to style the filename text.
+   * @param {string} fileext - The extension/type of the file; included in the tooltip.
+   * @param {string} labelattribute - The label attribute used; included in the tooltip.
+   * @param {Object} externalProjection - The projection details; included in the tooltip.
+   *
+   * Behavior:
+   * - Creates a list item styled with CSS properties for layout and hover effects.
+   * - Displays the filename in the specified color, with text overflow handling.
+   * - Provides additional file details in a tooltip triggered on hover.
+   * - Adds a remove button to each list item, invoking the `removeGeometryLayer` function when clicked.
+   * - Appends each configured list item to the global `geolist` element for UI rendering.
+   ****************************************************************************************/
+  function addToGeoList(filename, color, fileext, labelattribute, externalProjection) {
+    let liObj = document.createElement("li");
+    liObj.id = filename.replace(/[^a-z0-9_-]/gi, "_");
+
+    liObj.style.position = "relative";
+    liObj.style.padding = "2px 2px";
+    liObj.style.margin = "2px 0";
+    liObj.style.background = "transparent";
+    liObj.style.borderRadius = "3px";
+    liObj.style.display = "flex";
+    liObj.style.justifyContent = "space-between";
+    liObj.style.alignItems = "center";
+    liObj.style.transition = "background 0.2s";
+    liObj.style.fontSize = "0.95em";
+
+    liObj.addEventListener("mouseover", function () {
+      liObj.style.background = "#eaeaea";
+    });
+    liObj.addEventListener("mouseout", function () {
+      liObj.style.background = "transparent";
     });
 
-    if (debug) console.log(`${scriptName}: parseFile(fileObj) Finished!`);
+    let fileText = document.createElement("span");
+    fileText.style.color = color;
+    fileText.innerHTML = filename;
+    fileText.style.flexGrow = "1";
+    fileText.style.flexShrink = "1";
+    fileText.style.flexBasis = "auto";
+    fileText.style.overflow = "hidden";
+    fileText.style.textOverflow = "ellipsis";
+    fileText.style.whiteSpace = "nowrap";
+    fileText.style.marginRight = "5px";
+    //liObj.appendChild(fileText);
+
+    // Create the tooltip content
+    const tooltipContent = `File Type: ${fileext}\nLabel: ${labelattribute}\nProjection: ${externalProjection}`;
+    fileText.title = tooltipContent; // Set the tooltip
+    liObj.appendChild(fileText);
+
+    let removeButton = document.createElement("button");
+    removeButton.innerHTML = "X";
+    removeButton.style.flex = "none";
+    removeButton.style.backgroundColor = "#E57373";
+    removeButton.style.color = "white";
+    removeButton.style.border = "none";
+    removeButton.style.padding = "0";
+    removeButton.style.width = "16px";
+    removeButton.style.height = "16px";
+    removeButton.style.cursor = "pointer";
+    removeButton.style.marginLeft = "3px";
+    removeButton.addEventListener("click", () => removeGeometryLayer(filename));
+    liObj.appendChild(removeButton);
+
+    geolist.appendChild(liObj);
+  }
+
+  function createButton(text, color, mouseoverColor, type = "button", labelFor = "") {
+    let element;
+
+    if (type === "label") {
+      element = document.createElement("label");
+      element.textContent = text;
+
+      if (labelFor) {
+        element.htmlFor = labelFor;
+      }
+    } else if (type === "input") {
+      element = document.createElement("input");
+      element.type = "button"; // Input elements need a type attribute
+
+      element.value = text; // Use value for input types
+    } else {
+      element = document.createElement("button");
+      element.textContent = text;
+    }
+
+    element.style.padding = "8px 0px";
+    element.style.fontSize = "1rem";
+    element.style.border = `2px solid ${color}`;
+    element.style.borderRadius = "20px";
+    element.style.cursor = "pointer";
+    element.style.backgroundColor = color;
+    element.style.color = "white";
+    element.style.boxSizing = "border-box";
+    element.style.transition = "background-color 0.3s, border-color 0.3s";
+    element.style.fontWeight = "bold";
+    element.style.textAlign = "center";
+    element.style.display = "flex";
+    element.style.justifyContent = "center";
+    element.style.alignItems = "center";
+    element.style.width = "100%";
+    element.style.marginTop = "3px";
+    element.style.marginLeft = "5px"; // Add small margin on the left
+    element.style.marginRight = "5px"; // Add small margin on the right
+
+    element.addEventListener("mouseover", function () {
+      element.style.backgroundColor = mouseoverColor;
+      element.style.borderColor = mouseoverColor;
+    });
+
+    element.addEventListener("mouseout", function () {
+      element.style.backgroundColor = color;
+      element.style.borderColor = color;
+    });
+
+    return element;
   }
 
   /***************************************************************************
@@ -1429,7 +1600,7 @@ var geometries = function () {
    ****************************************************************************/
   function removeGeometryLayer(filename) {
     if (debug) {
-      console.log(`${scriptName}: removeGeometryLayer() called for (${filename})`);
+      console.log(`${scriptName}: removeGeometryLayer(): called for (${filename})`);
     }
 
     const layerName = `Geometry: ${filename}`;
@@ -1437,7 +1608,7 @@ var geometries = function () {
     const layerToDestroy = layers.find((layer) => layer.name === layerName);
 
     if (!layerToDestroy) {
-      console.info(`${scriptName}: No layer found for (${filename})`);
+      console.log(`${scriptName}: removeGeometryLayer(): No layer found for (${filename})`);
       return;
     }
 
@@ -1470,7 +1641,7 @@ var geometries = function () {
     const newLocalStorageSize = localStorage.WMEGeoLayers ? localStorage.WMEGeoLayers.length / 1000 : 0;
     const sizeChange = newLocalStorageSize - initialLocalStorageSize;
 
-    console.info(`${scriptName}: Removed file (${filename}). Storage size changed by ${sizeChange}kB. Total size is now ${newLocalStorageSize}kB.`);
+    console.log(`${scriptName}: removeGeometryLayer(): Removed file (${filename}). Storage size changed by ${sizeChange}kB. Total size is now ${newLocalStorageSize}kB.`);
 
     // Remove any list item using the listItemId
     const listItem = document.getElementById(listItemId);
@@ -1499,7 +1670,7 @@ var geometries = function () {
    * - Ensures debug logs are provided for tracing function execution when `debug` mode is active.
    **************************************************************/
   function createLayersFormats() {
-    if (debug) console.log(`${scriptName}: createLayersFormats() called`);
+    if (debug) console.log(`${scriptName}: createLayersFormats(): called`);
 
     if (typeof Wkt === "undefined") {
       console.error(`${scriptName}: Wkt is not available. Ensure the library is correctly included via @require.`);
@@ -1524,8 +1695,31 @@ var geometries = function () {
     return { formats, formathelp };
   }
 
+  /***********************************************************************************
+   * addGroupToggler
+   *
+   * Description:
+   * This function creates and adds a group toggler to a layer switcher UI component. It manages the visibility and interaction
+   * of different layer groups within a map or similar UI, providing a toggling mechanism for user interface groups.
+   *
+   * Parameters:
+   * @param {boolean} isDefault - A flag indicating whether the group is a default group.
+   * @param {string} layerSwitcherGroupItemName - The unique name used as an identifier for the layer switcher group element.
+   * @param {string} layerGroupVisibleName - The human-readable name for the layer group, shown in the UI.
+   *
+   * Returns:
+   * @returns {HTMLElement} - The group element that has been created or modified.
+   *
+   * Behavior:
+   * - If `isDefault` is true, it retrieves and operates on the existing group element related to the provided name.
+   * - Otherwise, it dynamically creates a new group list item.
+   * - Builds a toggler that includes a caret icon, a toggle switch, and a label displaying the group's visible name.
+   * - Attaches event handlers to manage collapsible behavior of the group toggler and switches.
+   * - Appends the configured group to the main UI component, either as an existing group or newly created one.
+   * - Logs the creation of the group toggler to the console for debugging purposes.
+   *****************************************************************************************/
   function addGroupToggler(isDefault, layerSwitcherGroupItemName, layerGroupVisibleName) {
-    if (debug) console.log(`${scriptName}: addGroupToggler() called`);
+    if (debug) console.log(`${scriptName}: addGroupToggler(): called`);
 
     var group;
     if (isDefault === true) {
@@ -1569,12 +1763,31 @@ var geometries = function () {
       layerGroupsList.appendChild(group);
     }
 
-    console.log(`${scriptName}: Group Toggler created for ${layerGroupVisibleName}`);
+    if (debug) console.log(`${scriptName}: addGroupToggler(): Group Toggler created for ${layerGroupVisibleName}`);
     return group;
   }
 
+  /******************************************************************************
+   * addLayerToggler
+   *
+   * Description:
+   * This function adds a toggler for individual layers within a group in a layer switcher UI component. It manages the visibility
+   * and interaction for specific map layers, allowing users to toggle them on and off within a UI group.
+   *
+   * Parameters:
+   * @param {HTMLElement} groupToggler - The parent group toggler element under which the layer toggler is added.
+   * @param {string} layerName - The name of the layer, used for display and creating unique identifiers.
+   * @param {Object} layerObj - The layer object that is being toggled, typically representing a map or UI layer.
+   *
+   * Behavior:
+   * - Locates the container (UL) within the group toggler where new layer togglers are to be appended.
+   * - Creates a checkbox element for the layer, setting it to checked by default for visibility.
+   * - Attaches events to both the individual layer checkbox and the group checkbox for toggling functionality.
+   * - Appends the fully configured toggler to the UI.
+   * - Logs the creation of the layer toggler for debugging purposes.
+   *******************************************************************************************/
   function addLayerToggler(groupToggler, layerName, layerObj) {
-    if (debug) console.log(`${scriptName}: addLayerToggler() called`);
+    if (debug) console.log(`${scriptName}: addLayerToggler(): called`);
 
     var layer_container = groupToggler.getElementsByTagName("UL")[0];
     var layerGroupCheckbox = groupToggler.getElementsByClassName("layer-switcher-toggler-tree-category")[0].getElementsByTagName("wz-toggle-switch")[0];
@@ -1595,7 +1808,7 @@ var geometries = function () {
     layerTogglerEventHandler(layerObj);
     layerTogglerGroupEventHandler(togglerCheckbox, layerObj);
 
-    if (debug) console.log(`${scriptName}: Layer Toggler created for ${layerName}`);
+    if (debug) console.log(`${scriptName}: addLayerToggler(): Layer Toggler created for ${layerName}`);
   }
 
   function layerTogglerEventHandler(layerObj) {

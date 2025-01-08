@@ -60,8 +60,9 @@ Once the script is installed and running, it will add a 'GEO' tab to the WME sid
 Relative to the original code by Timbones, the following enhancements have been made:
 
 1. **User Interface Improvements**:
-   - Added styling to form elements (buttons, sliders, labels, etc.) for a better user experience.
    - Added a user-friendly GEO tab within the WME Scripts sidebar for managing geometry imports and settings.
+   - Added styling to form elements (buttons, sliders, labels, etc.) for a better user experience.
+   - Added user input section for label value for Geo Files (GeoJSON, KML, etc) that have attributes.
 
 2. **Customization Options**:
    - Added options for customizing layer properties such as color, font size, fill opacity, line style, and label positions.
@@ -72,6 +73,7 @@ Relative to the original code by Timbones, the following enhancements have been 
 
 4. **Layer Management**:
    - Added options to clear imported layer individually.
+   - Added layers to WME Geometries section in the WME Map Layers sidebar to allow for hiding/showing of each layer individually.
    - Added local storage compression for efficient data storage of imported layers.
 
 5. **Improved File Handling**:
