@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2025.01.08.01
+// @version             2025.01.15.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -14,12 +14,14 @@
 // @require             https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
 // @require             https://openlayers.org/api/OpenLayers.js
 // @require             https://cdnjs.cloudflare.com/ajax/libs/wicket/1.3.8/wicket.js
+// @require             https://update.greasyfork.org/scripts/523870/1521199/GeoGPXer.js
 // @grant               none
 // @license             MIT
 // @original-author     Timbones
 // @original-contributors wlodek76, Twister-UK
 // @original-source     https://greasyfork.org/en/scripts/8129-wme-geometries
 // ==/UserScript==
+
 
 /********
  * TO DO LIST:
@@ -708,79 +710,77 @@ var geometries = function () {
       wktContainer.appendChild(buttonContainer);
       geoform.appendChild(wktContainer); // Append the container to the form
 
+      // Add Toggle Button for Debug
+      let debugToggleContainer = document.createElement("div");
+      debugToggleContainer.style.display = "flex";
+      debugToggleContainer.style.alignItems = "center";
+      debugToggleContainer.style.marginTop = "15px";
 
-    // Add Toggle Button for Debug
-    let debugToggleContainer = document.createElement("div");
-    debugToggleContainer.style.display = "flex";
-    debugToggleContainer.style.alignItems = "center";
-    debugToggleContainer.style.marginTop = "15px";
+      let debugToggleLabel = document.createElement("label");
+      debugToggleLabel.style.marginRight = "10px";
 
-    let debugToggleLabel = document.createElement("label");
-    debugToggleLabel.style.marginRight = "10px";
+      const updateLabel = () => {
+        debugToggleLabel.innerText = `Debug mode ${debug ? "ON" : "OFF"}`;
+      };
 
-    const updateLabel = () => {
-      debugToggleLabel.innerText = `Debug mode ${debug ? 'ON' : 'OFF'}`;
-    };
+      let debugSwitchWrapper = document.createElement("label");
+      debugSwitchWrapper.style.position = "relative";
+      debugSwitchWrapper.style.display = "inline-block";
+      debugSwitchWrapper.style.width = "40px";
+      debugSwitchWrapper.style.height = "20px";
+      debugSwitchWrapper.style.border = "1px solid #ccc";
+      debugSwitchWrapper.style.borderRadius = "20px";
 
-    let debugSwitchWrapper = document.createElement("label");
-    debugSwitchWrapper.style.position = "relative";
-    debugSwitchWrapper.style.display = "inline-block";
-    debugSwitchWrapper.style.width = "40px";
-    debugSwitchWrapper.style.height = "20px";
-    debugSwitchWrapper.style.border = "1px solid #ccc"; 
-    debugSwitchWrapper.style.borderRadius = "20px"; 
+      let debugToggleSwitch = document.createElement("input");
+      debugToggleSwitch.type = "checkbox";
+      debugToggleSwitch.style.opacity = "0";
+      debugToggleSwitch.style.width = "0";
+      debugToggleSwitch.style.height = "0";
 
-    let debugToggleSwitch = document.createElement("input");
-    debugToggleSwitch.type = "checkbox";
-    debugToggleSwitch.style.opacity = "0"; 
-    debugToggleSwitch.style.width = "0";
-    debugToggleSwitch.style.height = "0";
+      let switchSlider = document.createElement("span");
+      switchSlider.style.position = "absolute";
+      switchSlider.style.cursor = "pointer";
+      switchSlider.style.top = "0";
+      switchSlider.style.left = "0";
+      switchSlider.style.right = "0";
+      switchSlider.style.bottom = "0";
+      switchSlider.style.backgroundColor = "#ccc";
+      switchSlider.style.transition = ".4s";
+      switchSlider.style.borderRadius = "20px";
 
-    let switchSlider = document.createElement("span");
-    switchSlider.style.position = "absolute";
-    switchSlider.style.cursor = "pointer";
-    switchSlider.style.top = "0";
-    switchSlider.style.left = "0";
-    switchSlider.style.right = "0";
-    switchSlider.style.bottom = "0";
-    switchSlider.style.backgroundColor = "#ccc";
-    switchSlider.style.transition = ".4s";
-    switchSlider.style.borderRadius = "20px";
+      let innerSpan = document.createElement("span");
+      innerSpan.style.position = "absolute";
+      innerSpan.style.height = "14px";
+      innerSpan.style.width = "14px";
+      innerSpan.style.left = "3px";
+      innerSpan.style.bottom = "3px";
+      innerSpan.style.backgroundColor = "white";
+      innerSpan.style.transition = ".4s";
+      innerSpan.style.borderRadius = "50%";
 
-    let innerSpan = document.createElement("span");
-    innerSpan.style.position = "absolute";
-    innerSpan.style.height = "14px";
-    innerSpan.style.width = "14px";
-    innerSpan.style.left = "3px";
-    innerSpan.style.bottom = "3px";
-    innerSpan.style.backgroundColor = "white";
-    innerSpan.style.transition = ".4s";
-    innerSpan.style.borderRadius = "50%";
+      switchSlider.appendChild(innerSpan);
 
-    switchSlider.appendChild(innerSpan);
+      const updateSwitchState = () => {
+        switchSlider.style.backgroundColor = debug ? "#8BC34A" : "#ccc";
+        innerSpan.style.transform = debug ? "translateX(20px)" : "translateX(0)";
+      };
 
-    const updateSwitchState = () => {
-      switchSlider.style.backgroundColor = debug ? "#8BC34A" : "#ccc";
-      innerSpan.style.transform = debug ? "translateX(20px)" : "translateX(0)";
-    };
-
-    debugToggleSwitch.checked = debug;
-    updateLabel();
-    updateSwitchState();
-
-    debugToggleSwitch.addEventListener("change", () => {
-      debug = debugToggleSwitch.checked;
+      debugToggleSwitch.checked = debug;
       updateLabel();
       updateSwitchState();
-      console.log(`${scriptName}: Debug mode is now ${debug ? 'enabled' : 'disabled'}`);
-    });
 
-    debugSwitchWrapper.appendChild(debugToggleSwitch);
-    debugSwitchWrapper.appendChild(switchSlider);
-    debugToggleContainer.appendChild(debugToggleLabel);
-    debugToggleContainer.appendChild(debugSwitchWrapper);
-    geoform.appendChild(debugToggleContainer);
+      debugToggleSwitch.addEventListener("change", () => {
+        debug = debugToggleSwitch.checked;
+        updateLabel();
+        updateSwitchState();
+        console.log(`${scriptName}: Debug mode is now ${debug ? "enabled" : "disabled"}`);
+      });
 
+      debugSwitchWrapper.appendChild(debugToggleSwitch);
+      debugSwitchWrapper.appendChild(switchSlider);
+      debugToggleContainer.appendChild(debugToggleLabel);
+      debugToggleContainer.appendChild(debugSwitchWrapper);
+      geoform.appendChild(debugToggleContainer);
 
       console.log(`${scriptName}: User Interface Loaded!`);
       // Log the OpenLayers version
@@ -1020,37 +1020,45 @@ var geometries = function () {
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
-    // Check if format is supported
-    let parser = formats[fileext];
-    if (typeof parser == "undefined") {
-      console.error(`${scriptName}: addGeometryLayer(): ${fileext} format not supported :(`);
-      WazeWrap.Alerts.error(scriptName, `${fileext} format not supported :(`);
-      return;
-    }
-
-    let reader = new FileReader();
-    reader.onload = function (e) {
-      requestAnimationFrame(() => {
-        try {
-          let fileObj;
-          if (fileext === "WKT") {
-            if (debug) console.log(`${scriptName}: WKT file detected, converting each line to individual GeoJSON features...`);
-            let WKTtogGeojson = convertWKTToGeoJSON(e.target.result, filename);
-            fileObj = new layerStoreObj(WKTtogGeojson, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
-          } else {
-            fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
-          }
-
-          parseFile(fileObj); // Call parseFile directly
-        } catch (error) {
-          console.error(`${scriptName}: addGeometryLayer(): Error processing file:`, error);
-          WazeWrap.Alerts.error(scriptName, `Error processing file :(`);
-        }
-      });
-    };
-    reader.readAsText(file);
+      // Check if format is supported
+  let parser = formats[fileext];
+  if (typeof parser === "undefined") {
+    console.error(`${scriptName}: addGeometryLayer(): ${fileext} format not supported :(`);
+    WazeWrap.Alerts.error(scriptName, `${fileext} format not supported :(`);
+    return;
   }
 
+  let reader = new FileReader();
+  reader.onload = function (e) {
+    requestAnimationFrame(() => {
+      try {
+        let fileObj;
+        if (fileext === "WKT") {
+          if (debug) console.log(`${scriptName}: WKT file detected, converting each line to individual GeoJSON features...`);
+          let WKTtogGeojson = convertWKTToGeoJSON(e.target.result, filename);
+          fileObj = new layerStoreObj(WKTtogGeojson, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+        } else if (fileext === "GPX") {
+          // Use GeoGPXer to convert GPX to GeoJSON
+          let geoGPXer = new GeoGPXer();
+          let gpxDoc = geoGPXer.read(e.target.result);
+          if (debug) console.log(`${scriptName}: GPX file detected, Raw GPX XML`, gpxDoc);
+          let geoJsonData = geoGPXer.toGeoJSON(gpxDoc);
+          if (debug) console.log(`${scriptName}: GPX converted to GeoJSON`, geoJsonData);
+        
+          fileObj = new layerStoreObj(geoJsonData, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+        } else {
+          fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+        }
+
+        parseFile(fileObj); // Call parseFile directly
+      } catch (error) {
+        console.error(`${scriptName}: addGeometryLayer(): Error processing file:`, error);
+        WazeWrap.Alerts.error(scriptName, `Error processing file :(`);
+      }
+    });
+  };
+  reader.readAsText(file);
+}
   /*************************************************************************************
    * parseFile
    *
@@ -1127,18 +1135,25 @@ var geometries = function () {
     let features;
     try {
       features = parser.read(fileContent);
-      if (debug) console.log(`${scriptName}: parseFile(): Found ${features.length} features for ${filename}.`);
+      if (debug) console.log(`${scriptName}: parseFile(): Found ${features.length} features for ${filename}.${fileext}.`);
+
+      if (features.length === 0) {
+        WazeWrap.Alerts.error(scriptName, `No features found in file ${filename}.${fileext}`);
+        console.warn(`${scriptName}: parseFile(): No features found in file ${filename}.${fileext}.`);
+        return; // Early return to stop further execution when no features are found
+      }
     } catch (error) {
-      console.error(`${scriptName}: parseFile(): Error parsing file content for ${filename}:`, error);
-      WazeWrap.Alerts.error(scriptName, `Error parsing file content for ${filename}: ${error}`);
+      console.error(`${scriptName}: parseFile(): Error parsing file content for ${filename}.${fileext}:`, error);
+      WazeWrap.Alerts.error(scriptName, `Error parsing file content for ${filename}.${fileext}: ${error}`);
       return;
     }
 
     if (fileObj.labelattribute) {
       createLayerWithLabel(fileObj, features, parser.externalProjection); // Use the stored label attribute if it already exists
     } else {
+      if (debug) console.log(`${scriptName}: parseFile(): features.slice:`, features.slice(0, 9));
       // Await user interaction to get the label attribute when it's not already set
-      presentFeaturesAttributes(features.slice(0, 9))
+      presentFeaturesAttributes(features.slice(0, 9), features.length)
         .then((selectedAttribute) => {
           if (selectedAttribute) {
             //&& typeof features[0].attributes[selectedAttribute] === "string"
@@ -1196,25 +1211,40 @@ var geometries = function () {
       try {
         let labelContext = {
           formatLabel: function (feature) {
-            return feature.attributes[fileObj.labelattribute]?.replace(/\|/g, "\n") || "";
+              return feature.attributes[fileObj.labelattribute]?.replace(/\|/g, "\n") || "";
           },
-        };
-
-        const layerStyle = {
-          strokeColor: fileObj.color,
-          strokeOpacity: fileObj.lineopacity,
-          strokeWidth: fileObj.linesize,
-          strokeDashstyle: fileObj.linestyle,
-          fillColor: fileObj.color,
-          fillOpacity: fileObj.fillOpacity,
-          pointRadius: fileObj.fontsize,
-          fontColor: fileObj.color,
-          fontSize: fileObj.fontsize,
-          labelOutlineColor: "black",
-          labelOutlineWidth: fileObj.fontsize / 4,
-          labelAlign: fileObj.labelpos,
-          label: "${formatLabel}",
-        };
+          getOffset: function () {
+              return -(W.map.getZoom() + 5);
+          },
+          getSmooth: function () {
+              return '';
+          },
+          getReadable: function () {
+              return '1';
+          }
+      };
+  
+      const layerStyle = {
+        stroke: true,
+        strokeColor: fileObj.color,
+        strokeOpacity: fileObj.lineopacity,
+        strokeWidth: fileObj.linesize,
+        strokeDashstyle: fileObj.linestyle,
+        fillColor: fileObj.color,
+        fillOpacity: fileObj.fillOpacity,
+        pointRadius: fileObj.fontsize,
+        fontColor: fileObj.color,
+        fontSize: fileObj.fontsize,
+        labelOutlineColor: "black",
+        labelOutlineWidth: fileObj.fontsize / 4,
+        labelAlign: fileObj.labelpos,
+        pathLabel: "${formatLabel}",
+        label: "${formatLabel}",
+        labelSelect: false,
+        pathLabelYOffset: "${getOffset}",
+        pathLabelCurve: "${getSmooth}",
+        pathLabelReadable: "${getReadable}",
+    };
 
         let defaultStyle = new OpenLayers.Style(layerStyle, { context: labelContext });
         let layerid = `wme_geometry_${layerindex}`;
@@ -1313,71 +1343,80 @@ var geometries = function () {
    *   or reject the promise, respectively.
    * - Ensures modal visibility with a semi-transparent overlay backdrop.
    *****************************************************************************************************/
-  function presentFeaturesAttributes(features) {
+  function presentFeaturesAttributes(features, nbFeatures) {
     return new Promise((resolve, reject) => {
-      // Check if there is only one attribute across all features
-      const firstFeature = features[0];
-      const attributes = Object.keys(firstFeature.attributes);
-
-      if (attributes.length === 1) {
-        // If there is exactly one attribute, use it as the Label
-        resolve(attributes[0]);
-        return; // Exit the function early
-      }
+      const allAttributes = features.map((feature) => Object.keys(feature.attributes));
+      const attributes = Array.from(new Set(allAttributes.flat()));
 
       let attributeInput = document.createElement("div");
       attributeInput.style = "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background: #fff; border: 3px solid #ccc; border-radius: 5%; display: flex; flex-direction: column;";
 
       let title = document.createElement("h3");
-      title.textContent = "Feature Attributes";
       title.style = "margin-bottom: 5px; color: #333; align-self: center;";
+      title.textContent = `Feature Attributes\n(Total Features: ${nbFeatures})`;
       attributeInput.appendChild(title);
 
-      let propsContainer = document.createElement("div");
-      propsContainer.style = "overflow-y: auto; max-height: 300px; padding: 5px;";
-      attributeInput.appendChild(propsContainer);
+      let message = document.createElement("p");
+      message.style = "margin-top: 10px; color: #777; text-align: center;";
 
-      features.forEach((feature, index) => {
-        let featureHeader = document.createElement("h4");
-        featureHeader.textContent = `Feature ${index + 1}`;
-        featureHeader.style = "color: #555;";
-        propsContainer.appendChild(featureHeader);
+      let selectBox;
 
-        let propsList = document.createElement("ul");
-        Object.keys(feature.attributes).forEach((key) => {
-          let propItem = document.createElement("li");
-          propItem.innerHTML = `<span style="color: blue;">${key}</span>: ${feature.attributes[key]}`;
-          propItem.style = "list-style-type: none; padding: 2px;";
-          propsList.appendChild(propItem);
+      if (attributes.length === 0) {
+        message.textContent = "No attributes found to use as labels for the features.";
+        attributeInput.appendChild(message);
+      } else {
+        let propsContainer = document.createElement("div");
+        propsContainer.style = "overflow-y: auto; max-height: 300px; padding: 5px;";
+        attributeInput.appendChild(propsContainer);
+
+        features.forEach((feature, index) => {
+          let featureHeader = document.createElement("h4");
+          featureHeader.textContent = `Feature ${index + 1}`;
+          featureHeader.style = "color: #555;";
+          propsContainer.appendChild(featureHeader);
+
+          let propsList = document.createElement("ul");
+          Object.keys(feature.attributes).forEach((key) => {
+            let propItem = document.createElement("li");
+            propItem.innerHTML = `<span style="color: blue;">${key}</span>: ${feature.attributes[key]}`;
+            propItem.style = "list-style-type: none; padding: 2px;";
+            propsList.appendChild(propItem);
+          });
+          propsContainer.appendChild(propsList);
         });
-        propsContainer.appendChild(propsList);
-      });
 
-      let inputLabel = document.createElement("label");
-      inputLabel.textContent = "Select Attributes to use for Label:";
-      inputLabel.style = "display: block; margin-top: 15px;";
-      attributeInput.appendChild(inputLabel);
+        let inputLabel = document.createElement("label");
+        inputLabel.textContent = "Select Attributes to use for Label:";
+        inputLabel.style = "display: block; margin-top: 15px;";
+        attributeInput.appendChild(inputLabel);
 
-      // Create a dropdown (select box) instead of text input
-      let selectBox = document.createElement("select");
-      selectBox.style = "width: 100%; padding: 8px; margin-top: 5px;";
+        selectBox = document.createElement("select");
+        selectBox.style = "width: 100%; padding: 8px; margin-top: 5px;";
 
-      // Populate the dropdown with the list of attributes
-      attributes.forEach((attribute) => {
-        let option = document.createElement("option");
-        option.value = attribute;
-        option.textContent = attribute;
-        selectBox.appendChild(option);
-      });
-      attributeInput.appendChild(selectBox);
+        attributes.forEach((attribute) => {
+          let option = document.createElement("option");
+          option.value = attribute;
+          option.textContent = attribute;
+          selectBox.appendChild(option);
+        });
+
+        // Add "No Labels" option at the end
+        let noLabelsOption = document.createElement("option");
+        noLabelsOption.value = "No Labels";
+        noLabelsOption.textContent = "No Labels";
+        selectBox.appendChild(noLabelsOption);
+
+        attributeInput.appendChild(selectBox);
+      }
 
       let buttonsContainer = document.createElement("div");
       buttonsContainer.style = "margin-top: 10px; display: flex; justify-content: flex-end;";
 
-      let closeButton = createButton("Import", "#8BC34A", "#689F38", "button");
-      closeButton.onclick = () => {
+      let importButton = createButton("Import", "#8BC34A", "#689F38", "button");
+      importButton.onclick = () => {
         document.body.removeChild(overlay);
-        resolve(selectBox.value);
+        // Resolve with selected value or "NONE" if "No Labels" is chosen
+        resolve(selectBox && selectBox.options.length > 0 ? selectBox.value : "No Labels");
       };
 
       let cancelButton = createButton("Cancel", "#E57373", "#D32F2F", "button");
@@ -1386,12 +1425,12 @@ var geometries = function () {
         reject("Operation cancelled by the user");
       };
 
-      buttonsContainer.appendChild(closeButton);
+      buttonsContainer.appendChild(importButton);
       buttonsContainer.appendChild(cancelButton);
       attributeInput.appendChild(buttonsContainer);
 
       let overlay = document.createElement("div");
-      overlay.id = "presentFeaturesAttributesOverlay"; // Assign an ID to the overlay
+      overlay.id = "presentFeaturesAttributesOverlay";
       overlay.style = "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;";
       overlay.appendChild(attributeInput);
 
@@ -1690,7 +1729,7 @@ var geometries = function () {
     tryCreateFormat("GEOJSON", OpenLayers.Format.GeoJSON);
     tryCreateFormat("WKT", Wkt.Wkt); //  use wicket.js to convert all WKT to geoJSON before parsefile() Wkt.read() Wkt.toJSON(), it is a better parser and more statble then OpenLayers.Format.WKT
     tryCreateFormat("KML", OpenLayers.Format.KML);
-    tryCreateFormat("GPX", OpenLayers.Format.GPX);
+    tryCreateFormat("GPX", GeoGPXer); //use GeoGPXer.js to convert all GPX to geoJSON before parsefile() GeoGPXer.read() GeoGPXer.toGeoJSON(), GeoGPXer extracts the GPX <extention> tags where OL.Format.GPX does not.
     tryCreateFormat("GML", OpenLayers.Format.GML);
     return { formats, formathelp };
   }
