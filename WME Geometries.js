@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2025.01.15.01
+// @version             2025.01.18.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -12,8 +12,9 @@
 // @exclude             https://www.waze.com/*user/*editor/*
 // @require             https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js
 // @require             https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
-// @require             https://openlayers.org/api/OpenLayers.js
-// @require             https://cdnjs.cloudflare.com/ajax/libs/wicket/1.3.8/wicket.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/KML.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/GML.js
+// @require             https://update.greasyfork.org/scripts/523986/1521862/GeoWKTer.js
 // @require             https://update.greasyfork.org/scripts/523870/1521199/GeoGPXer.js
 // @grant               none
 // @license             MIT
@@ -21,7 +22,6 @@
 // @original-contributors wlodek76, Twister-UK
 // @original-source     https://greasyfork.org/en/scripts/8129-wme-geometries
 // ==/UserScript==
-
 
 /********
  * TO DO LIST:
@@ -33,7 +33,6 @@ var geometries = function () {
   const scriptMetadata = GM_info.script;
   const scriptName = scriptMetadata.name;
   let maxlabels = 100000; // maximum number of features that will be shown with labels
-  let labelname = /^name|name$|^label|label$/;
 
   let geolist;
   let debug = false;
@@ -44,7 +43,7 @@ var geometries = function () {
   let storedLayers = [];
   let groupToggler;
 
-  function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelattribute) {
+  function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelattribute, orgFileext) {
     this.fileContent = fileContent;
     this.color = color;
     this.fileext = fileext;
@@ -56,6 +55,7 @@ var geometries = function () {
     this.linestyle = linestyle;
     this.labelpos = labelpos;
     this.labelattribute = labelattribute;
+    this.orgFileext = orgFileext;
   }
 
   /*************************************************************************************
@@ -815,11 +815,11 @@ var geometries = function () {
    * - Utilizes global variables and functions such as `formats`, `storedLayers`, and `parseFile`.
    * - Relies on DOM elements and user inputs that need to be correctly set up in the environment for this function to work.
    *****************************************************************************/
-  function draw_WKT() {
-    // use wicket.js for all WKT as it is a more stable parser then the curren OpenLayer Version in WME
-    if (debug) console.log(`${scriptName}:  draw_WKT(): Import WKT called`);
 
-    // Add variables from Options input section to WKT input geo
+  function draw_WKT() {
+    if (debug) console.log(`${scriptName}: draw_WKT(): Import WKT called`);
+
+    // Retrieve style and layer options
     let color = document.getElementById("color").value;
     let fillOpacity = document.getElementById("fill_opacity").value;
     let fontsize = document.getElementById("font_size").value;
@@ -829,68 +829,59 @@ var geometries = function () {
     let layerName = document.getElementById("input_WKT_name").value;
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
+    // Check for empty layer name
+    if (layerName.trim() === "") {
+      if (debug) console.error(`${scriptName}: WKT Input layer name cannot be empty.`);
+      WazeWrap.Alerts.error(scriptName, "WKT Input layer name cannot be empty.");
+      return;
+    }
     // Check for duplicate layer name
     let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
     for (let i = 0; i < layers.length; i++) {
       if (layers[i].name === "Geometry: " + layerName) {
-        if (debug) console.error(`${scriptName}: current WKT layer name already used`);
-        WazeWrap.Alerts.error(scriptName, "Current WKT layer name already used!");
+        if (debug) console.error(`${scriptName}: Current WKT layer name already used`);
+        WazeWrap.Alerts.error(scriptName, "Current layer name already used!");
         return;
       }
     }
-    let val_from_WKT_textarea = document.getElementById("input_WKT").value;
-    if (val_from_WKT_textarea.trim() === "") {
+    // Retrieve and validate WKT input
+    let wktInput = document.getElementById("input_WKT").value.trim();
+    if (wktInput === "") {
       if (debug) console.error(`${scriptName}: WKT input is empty.`);
       WazeWrap.Alerts.error(scriptName, "WKT input is empty.");
       return;
     }
-    // Using the Wkt.js library to parse the WKT
-    let wktObj = formats["WKT"];
-    try {
-      wktObj.read(val_from_WKT_textarea);
-      if (debug) console.info(`${scriptName}: WKT input successfuly read:`, wktObj);
-    } catch (error) {
-      if (debug) console.error(`${scriptName}: Error parsing WKT. Please check your input format.`, error);
-      WazeWrap.Alerts.error(scriptName, "Error parsing WKT. Please check your input format.");
-      return;
-    }
-    // Convert WKT to GeoJSON
+
     let geojsonData;
     try {
-      let geometry = wktObj.toJson();
-      geojsonData = {
-        type: "Feature",
-        geometry: geometry,
-        properties: {
-          Name: layerName,
-        },
-      };
+      // Initialize GeoWKTer and parse WKT
+      let wktObj = new GeoWKTer();
+      if (debug) console.info(`${scriptName}: WKT input:`, wktInput);
 
-      if (debug) console.log(`${scriptName}: draw_WKT(): WKT input successfuly converted to geoJSON`, geojsonData);
+      // Parse and convert WKT to GeoJSON
+      let parsedData = wktObj.read(wktInput, layerName);
+      if (debug) console.info(`${scriptName}: WKT input successfully read:`, parsedData);
+
+      geojsonData = wktObj.toGeoJSON(parsedData);
+      if (debug) console.log(`${scriptName}: draw_WKT(): WKT input successfully converted to GeoJSON`, geojsonData);
     } catch (error) {
-      if (debug) console.error(`${scriptName}: draw_WKT(): Error converting WKT to GeoJSON`, error);
-      WazeWrap.Alerts.error(scriptName, "Error converting WKT to GeoJSON");
+      if (debug) console.error(`${scriptName}: Error processing WKT input.`, error);
+      WazeWrap.Alerts.error(scriptName, `Error processing WKT. Please check your input format.\n` + error);
       return;
     }
     // Construct and store the layer object
-    let geojson_to_layer_obj = new layerStoreObj(geojsonData, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "Name");
-    storedLayers.push(geojson_to_layer_obj);
+    try {
+      let geojson_layer = new layerStoreObj(geojsonData, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "Name", "WKT");
+      storedLayers.push(geojson_layer);
+      parseFile(geojson_layer);
 
-    // Add the layer to the map and parse
-    try {
-      parseFile(geojson_to_layer_obj);
-    } catch (error) {
-      if (debug) console.error(`${scriptName}: draw_WKT(): Error adding layer to map:`, error);
-      return;
-    }
-    // Compressed storage in localStorage
-    try {
+      // Compressed storage in localStorage
       localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
+      console.log(`${scriptName}: draw_WKT(): Stored WKT Input - ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
     } catch (error) {
-      if (debug) console.error(`${scriptName}: draw_WKT(): Error saving to localStorage`, error);
-      return;
+      if (debug) console.error(`${scriptName}: Error storing or adding WKT layer.`, error);
+      WazeWrap.Alerts.error(scriptName, "Error storing or adding the WKT layer.");
     }
-    console.log(`${scriptName}: draw_WKT(): Stored WKT Input - ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
   }
 
   /*******************************************************************************
@@ -962,7 +953,7 @@ var geometries = function () {
       return;
     }
 
-    let state_obj = new layerStoreObj(state_geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "Name");
+    let state_obj = new layerStoreObj(state_geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "Name", "GEOJSON");
     storedLayers.push(state_obj);
 
     if (debug) console.info(`${scriptName}: State _obj:`, state_obj);
@@ -1020,45 +1011,53 @@ var geometries = function () {
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
-      // Check if format is supported
-  let parser = formats[fileext];
-  if (typeof parser === "undefined") {
-    console.error(`${scriptName}: addGeometryLayer(): ${fileext} format not supported :(`);
-    WazeWrap.Alerts.error(scriptName, `${fileext} format not supported :(`);
-    return;
-  }
+    // Check if format is supported
+    let parser = formats[fileext];
+    if (typeof parser === "undefined") {
+      console.error(`${scriptName}: addGeometryLayer(): ${fileext} format not supported :(`);
+      WazeWrap.Alerts.error(scriptName, `${fileext} format not supported :(`);
+      return;
+    }
 
-  let reader = new FileReader();
-  reader.onload = function (e) {
-    requestAnimationFrame(() => {
-      try {
-        let fileObj;
-        if (fileext === "WKT") {
-          if (debug) console.log(`${scriptName}: WKT file detected, converting each line to individual GeoJSON features...`);
-          let WKTtogGeojson = convertWKTToGeoJSON(e.target.result, filename);
-          fileObj = new layerStoreObj(WKTtogGeojson, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
-        } else if (fileext === "GPX") {
-          // Use GeoGPXer to convert GPX to GeoJSON
-          let geoGPXer = new GeoGPXer();
-          let gpxDoc = geoGPXer.read(e.target.result);
-          if (debug) console.log(`${scriptName}: GPX file detected, Raw GPX XML`, gpxDoc);
-          let geoJsonData = geoGPXer.toGeoJSON(gpxDoc);
-          if (debug) console.log(`${scriptName}: GPX converted to GeoJSON`, geoJsonData);
-        
-          fileObj = new layerStoreObj(geoJsonData, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
-        } else {
-          fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos);
+    let reader = new FileReader();
+
+    reader.onload = function (e) {
+      requestAnimationFrame(() => {
+        try {
+          let fileObj;
+          if (fileext === "WKT") {
+            if (debug) console.log(`${scriptName}: WKT file detected, converting each line to individual GeoJSON features...`);
+
+            // Instantiate GeoWKTer and convert WKT to GeoJSON
+            let geoWKTer = new GeoWKTer();
+            let wktData = geoWKTer.read(e.target.result, filename); // Read the WKT content
+            if (debug) console.log(`${scriptName}: WKT file detected, Raw PARSED WKT`, wktData);
+            let WKTtoGeoJSON = geoWKTer.toGeoJSON(wktData); // Convert to GeoJSON
+            if (debug) console.log(`${scriptName}: WKT converted to GeoJSON`, WKTtoGeoJSON);
+
+            fileObj = new layerStoreObj(WKTtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+          } else if (fileext === "GPX") {
+            // Use GeoGPXer to convert GPX to GeoJSON
+            let geoGPXer = new GeoGPXer();
+            let gpxDoc = geoGPXer.read(e.target.result);
+            if (debug) console.log(`${scriptName}: GPX file detected, Raw GPX XML`, gpxDoc);
+            let geoJsonData = geoGPXer.toGeoJSON(gpxDoc);
+            if (debug) console.log(`${scriptName}: GPX converted to GeoJSON`, geoJsonData);
+
+            fileObj = new layerStoreObj(geoJsonData, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+          } else {
+            fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+          }
+
+          parseFile(fileObj); // Call parseFile directly
+        } catch (error) {
+          console.error(`${scriptName}: addGeometryLayer(): Error processing file:`, error);
+          WazeWrap.Alerts.error(scriptName, `Error processing file :(`);
         }
-
-        parseFile(fileObj); // Call parseFile directly
-      } catch (error) {
-        console.error(`${scriptName}: addGeometryLayer(): Error processing file:`, error);
-        WazeWrap.Alerts.error(scriptName, `Error processing file :(`);
-      }
-    });
-  };
-  reader.readAsText(file);
-}
+      });
+    };
+    reader.readAsText(file);
+  }
   /*************************************************************************************
    * parseFile
    *
@@ -1095,6 +1094,7 @@ var geometries = function () {
   function parseFile(fileObj) {
     if (debug) console.log(`${scriptName}: parseFile(): called`, fileObj);
     const fileext = fileObj.fileext.toUpperCase();
+    const orgFileext = fileObj.orgFileext.toUpperCase();
     const fileContent = fileObj.fileContent;
     const filename = fileObj.filename;
     const parser = formats[fileext];
@@ -1135,16 +1135,16 @@ var geometries = function () {
     let features;
     try {
       features = parser.read(fileContent);
-      if (debug) console.log(`${scriptName}: parseFile(): Found ${features.length} features for ${filename}.${fileext}.`);
+      if (debug) console.log(`${scriptName}: parseFile(): Found ${features.length} features for ${filename}.${orgFileext}.`);
 
       if (features.length === 0) {
-        WazeWrap.Alerts.error(scriptName, `No features found in file ${filename}.${fileext}`);
-        console.warn(`${scriptName}: parseFile(): No features found in file ${filename}.${fileext}.`);
+        WazeWrap.Alerts.error(scriptName, `No features found in file ${filename}.${orgFileext}`);
+        console.warn(`${scriptName}: parseFile(): No features found in file ${filename}.${orgFileext}.`);
         return; // Early return to stop further execution when no features are found
       }
     } catch (error) {
-      console.error(`${scriptName}: parseFile(): Error parsing file content for ${filename}.${fileext}:`, error);
-      WazeWrap.Alerts.error(scriptName, `Error parsing file content for ${filename}.${fileext}: ${error}`);
+      console.error(`${scriptName}: parseFile(): Error parsing file content for ${filename}.${orgFileext}:`, error);
+      WazeWrap.Alerts.error(scriptName, `Error parsing file content for ${filename}.${orgFileext}: ${error}`);
       return;
     }
 
@@ -1174,77 +1174,108 @@ var geometries = function () {
    * createLayerWithLabel
    *
    * Description:
-   * Configures and adds a new vector layer to the map, applying styling and labeling
-   * based on attributes from the geographic features. This function manages the styling
-   * context, constructs the layer, updates the UI with toggler controls, and stores the
-   * layer data in local storage to preserve state across sessions.
+   * Configures and adds a new vector layer to the map, applying styling and dynamic labeling
+   * based on attributes from the geographic features. This function manages the label style context,
+   * constructs the layer, updates the UI with toggler controls, and stores the layer configuration
+   * in local storage to preserve its state across sessions.
    *
    * Parameters:
    * @param {Object} fileObj - Object containing metadata and styling options for the layer.
    *   - {string} fileObj.filename - The name of the file, used for layer identification.
-   *   - {string} fileObj.color - Color used for styling the layer.
-   *   - {number} fileObj.lineopacity, fileObj.linesize, fileObj.linestyle - Line styling configurations.
-   *   - {number} fileObj.fillOpacity - Opacity for the fill area of geometries.
-   *   - {number} fileObj.fontsize - Size for point or label fonts.
-   *   - {string} fileObj.labelattribute - Attribute for labeling features.
+   *   - {string} fileObj.color - The color used for styling the layer.
+   *   - {number} fileObj.lineopacity - Opacity for line styling.
+   *   - {number} fileObj.linesize - Width of lines in the layer.
+   *   - {string} fileObj.linestyle - Dash style for lines.
+   *   - {number} fileObj.fillOpacity - Opacity for filling geometries.
+   *   - {number} fileObj.fontsize - Font size for labels and points.
+   *   - {string} fileObj.labelattribute - Template string for labeling features; may use `${attribute}` syntax.
    *   - {string} fileObj.labelpos - Position for label text alignment.
-   * @param {Array} features - The geographic features to be added to the layer.
-   * @param {Object} externalProjection - The projection object for feature coordinates.
+   * @param {Array} features - Array of geographic features to be added to the layer.
+   * @param {Object} externalProjection - Projection object for transforming feature coordinates as necessary.
    *
    * Behavior:
-   * - Constructs a label context to format and place labels based on feature attributes.
-   * - Defines layer styling using attributes from `fileObj` and assigns a context for labels.
-   * - Creates a new vector layer, setting its unique ID and z-index.
-   * - Styles the layer using a `StyleMap` and adds the provided features to it.
-   * - Checks for duplicates in stored layers, updating local storage if the layer is new.
-   * - Registers the layer with a group toggler for UI visibility control.
-   * - Appends the layer to the main map while managing toggling and list updates.
-   *****************************************************************************************/
+   * - Constructs a label context with functions to format and position labels based on feature attributes.
+   * - Defines layer styling using attributes from `fileObj` and assigns a context for dynamic label computation.
+   * - Creates a new vector layer, sets its unique ID, and assigns a z-index for rendering order.
+   * - Uses `OpenLayers.StyleMap` to apply the defined style and attaches provided features to the layer.
+   * - Prevents duplicate storage by checking existing layers, updating local storage only for new layers.
+   * - Registers the layer with a group toggler, providing UI controls for visibility management.
+   * - Integrates the layer into the main map and manages additional elements like toggling and list updates.
+   ******************************************************************************************/
+
   function createLayerWithLabel(fileObj, features, externalProjection) {
     if (debug) console.log(`${scriptName}: createLayerWithLabel(): Called`);
 
     toggleLoadingMessage(true);
 
     const delayDuration = 300;
-    // need to add a little timeout to give the loading message time to draw on screen
     setTimeout(() => {
       try {
         let labelContext = {
           formatLabel: function (feature) {
-              return feature.attributes[fileObj.labelattribute]?.replace(/\|/g, "\n") || "";
+            let labelTemplate = fileObj.labelattribute;
+
+            if (!labelTemplate || labelTemplate === " ") {
+              return "";
+            }
+
+            if (feature.attributes.hasOwnProperty(labelTemplate)) {
+              return feature.attributes[labelTemplate] || "";
+            }
+
+            labelTemplate = labelTemplate.replace(/\\n/g, "\n");
+
+            try {
+              labelTemplate = labelTemplate
+                .replace(/\${(.*?)}/g, (match, attributeName) => {
+                  attributeName = attributeName.trim();
+
+                  if (feature.attributes.hasOwnProperty(attributeName)) {
+                    return feature.attributes[attributeName] || "";
+                  }
+
+                  return "";
+                })
+                .trim();
+            } catch (error) {
+              console.error(`${scriptName}: Error processing label expression:`, error);
+              return "";
+            }
+
+            return labelTemplate;
           },
           getOffset: function () {
-              return -(W.map.getZoom() + 5);
+            return -(W.map.getZoom() + 5);
           },
           getSmooth: function () {
-              return '';
+            return "";
           },
           getReadable: function () {
-              return '1';
-          }
-      };
-  
-      const layerStyle = {
-        stroke: true,
-        strokeColor: fileObj.color,
-        strokeOpacity: fileObj.lineopacity,
-        strokeWidth: fileObj.linesize,
-        strokeDashstyle: fileObj.linestyle,
-        fillColor: fileObj.color,
-        fillOpacity: fileObj.fillOpacity,
-        pointRadius: fileObj.fontsize,
-        fontColor: fileObj.color,
-        fontSize: fileObj.fontsize,
-        labelOutlineColor: "black",
-        labelOutlineWidth: fileObj.fontsize / 4,
-        labelAlign: fileObj.labelpos,
-        pathLabel: "${formatLabel}",
-        label: "${formatLabel}",
-        labelSelect: false,
-        pathLabelYOffset: "${getOffset}",
-        pathLabelCurve: "${getSmooth}",
-        pathLabelReadable: "${getReadable}",
-    };
+            return "1";
+          },
+        };
+
+        const layerStyle = {
+          stroke: true,
+          strokeColor: fileObj.color,
+          strokeOpacity: fileObj.lineopacity,
+          strokeWidth: fileObj.linesize,
+          strokeDashstyle: fileObj.linestyle,
+          fillColor: fileObj.color,
+          fillOpacity: fileObj.fillOpacity,
+          pointRadius: fileObj.fontsize,
+          fontColor: fileObj.color,
+          fontSize: fileObj.fontsize,
+          labelOutlineColor: "black",
+          labelOutlineWidth: fileObj.fontsize / 4,
+          labelAlign: fileObj.labelpos,
+          pathLabel: "${formatLabel}",
+          label: "${formatLabel}",
+          labelSelect: false,
+          pathLabelYOffset: "${getOffset}",
+          pathLabelCurve: "${getSmooth}",
+          pathLabelReadable: "${getReadable}",
+        };
 
         let defaultStyle = new OpenLayers.Style(layerStyle, { context: labelContext });
         let layerid = `wme_geometry_${layerindex}`;
@@ -1277,7 +1308,7 @@ var geometries = function () {
           groupToggler = addGroupToggler(false, "layer-switcher-group_wme_geometries", "WME Geometries");
         }
 
-        addToGeoList(fileObj.filename, fileObj.color, fileObj.fileext, fileObj.labelattribute, externalProjection);
+        addToGeoList(fileObj.filename, fileObj.color, fileObj.orgFileext, fileObj.labelattribute, externalProjection);
         addLayerToggler(groupToggler, fileObj.filename, WME_Geometry);
         W.map.addLayer(WME_Geometry);
         if (debug) console.log(`${scriptName}: createLayerWithLabel(): New Layer ${fileObj.filename} Added`);
@@ -1349,49 +1380,80 @@ var geometries = function () {
       const attributes = Array.from(new Set(allAttributes.flat()));
 
       let attributeInput = document.createElement("div");
-      attributeInput.style = "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background: #fff; border: 3px solid #ccc; border-radius: 5%; display: flex; flex-direction: column;";
+      attributeInput.style.position = "fixed";
+      attributeInput.style.left = "50%";
+      attributeInput.style.top = "50%";
+      attributeInput.style.transform = "translate(-50%, -50%)";
+      attributeInput.style.zIndex = "1001";
+      attributeInput.style.width = "80%";
+      attributeInput.style.maxWidth = "600px";
+      attributeInput.style.padding = "10px";
+      attributeInput.style.background = "#fff";
+      attributeInput.style.border = "3px solid #ccc";
+      attributeInput.style.borderRadius = "5%";
+      attributeInput.style.display = "flex";
+      attributeInput.style.flexDirection = "column";
 
-      let title = document.createElement("h3");
-      title.style = "margin-bottom: 5px; color: #333; align-self: center;";
-      title.textContent = `Feature Attributes\n(Total Features: ${nbFeatures})`;
+      let title = document.createElement("label");
+      title.style.marginBottom = "5px";
+      title.style.color = "#333";
+      title.style.alignSelf = "center";
+      title.style.fontSize = "1.2em";
+      title.innerHTML = `Feature Attributes<br>Total Features: ${nbFeatures}`;
       attributeInput.appendChild(title);
 
       let message = document.createElement("p");
-      message.style = "margin-top: 10px; color: #777; text-align: center;";
+      message.style.marginTop = "10px";
+      message.style.color = "#777";
+      message.style.textAlign = "center";
 
-      let selectBox;
+      let selectBox, customLabelInput;
 
       if (attributes.length === 0) {
         message.textContent = "No attributes found to use as labels for the features.";
         attributeInput.appendChild(message);
       } else {
         let propsContainer = document.createElement("div");
-        propsContainer.style = "overflow-y: auto; max-height: 300px; padding: 5px;";
+        propsContainer.style.overflowY = "auto";
+        propsContainer.style.maxHeight = "300px";
+        propsContainer.style.padding = "5px";
+        propsContainer.style.backgroundColor = "#f0f0f0"; // Light gray color
+        propsContainer.style.border = "1px solid black";
+        propsContainer.style.borderRadius = "10px";
         attributeInput.appendChild(propsContainer);
 
         features.forEach((feature, index) => {
-          let featureHeader = document.createElement("h4");
+          let featureHeader = document.createElement("label");
           featureHeader.textContent = `Feature ${index + 1}`;
-          featureHeader.style = "color: #555;";
+          featureHeader.style.color = "#333";
+          featureHeader.style.fontSize = "1.1em";
           propsContainer.appendChild(featureHeader);
 
           let propsList = document.createElement("ul");
           Object.keys(feature.attributes).forEach((key) => {
             let propItem = document.createElement("li");
             propItem.innerHTML = `<span style="color: blue;">${key}</span>: ${feature.attributes[key]}`;
-            propItem.style = "list-style-type: none; padding: 2px;";
+            propItem.style.listStyleType = "none";
+            propItem.style.padding = "2px";
+            propItem.style.fontSize = "0.9em";
             propsList.appendChild(propItem);
           });
           propsContainer.appendChild(propsList);
         });
 
         let inputLabel = document.createElement("label");
-        inputLabel.textContent = "Select Attributes to use for Label:";
-        inputLabel.style = "display: block; margin-top: 15px;";
+        inputLabel.textContent = "Select Attribute to use for Label:";
+        inputLabel.style.display = "block";
+        inputLabel.style.marginTop = "15px";
         attributeInput.appendChild(inputLabel);
 
         selectBox = document.createElement("select");
-        selectBox.style = "width: 100%; padding: 8px; margin-top: 5px;";
+        selectBox.style.width = "90%";
+        selectBox.style.padding = "8px";
+        selectBox.style.marginTop = "5px";
+        selectBox.style.marginLeft = "5%";
+        selectBox.style.marginRight = "5%";
+        selectBox.style.borderRadius = "5px";
 
         attributes.forEach((attribute) => {
           let option = document.createElement("option");
@@ -1400,23 +1462,86 @@ var geometries = function () {
           selectBox.appendChild(option);
         });
 
-        // Add "No Labels" option at the end
+        // Add "No Labels" option
         let noLabelsOption = document.createElement("option");
-        noLabelsOption.value = "No Labels";
-        noLabelsOption.textContent = "No Labels";
+        noLabelsOption.value = " ";
+        noLabelsOption.textContent = "- No Labels -";
         selectBox.appendChild(noLabelsOption);
 
+        // Add "Custom Label" option
+        let customLabelOption = document.createElement("option");
+        customLabelOption.value = "custom";
+        customLabelOption.textContent = "Custom Label";
+        selectBox.appendChild(customLabelOption);
+
         attributeInput.appendChild(selectBox);
+
+        // Create a hidden textarea for custom labels
+        customLabelInput = document.createElement("textarea");
+        customLabelInput.placeholder = `Enter your custom label using \${attributeName} for dynamic values.
+        Feature 1
+          BridgeNumber: 01995
+          FacilityCarried: U.S. ROUTE 6
+          FeatureCrossed: BIG RIVER
+        
+        Example: 
+        "#:\${BridgeNumber}\\n\${FacilityCarried} over\\n\${FeatureCrossed}" 
+        
+        Expected Output: 
+          #:01995
+          U.S. ROUTE 6 over
+          BIG RIVER`;
+        customLabelInput.style.width = "90%";
+        customLabelInput.style.height = "300px";
+        customLabelInput.style.maxHeight = "300px";
+        customLabelInput.style.padding = "8px";
+        customLabelInput.style.fontSize = "1rem";
+        customLabelInput.style.border = "2px solid #ddd";
+        customLabelInput.style.borderRadius = "5px";
+        customLabelInput.style.boxSizing = "border-box";
+        customLabelInput.style.resize = "vertical"; // Limit resizing to vertical only
+        customLabelInput.style.display = "none"; // Hide it initially
+        customLabelInput.style.marginTop = "5px";
+        customLabelInput.style.marginLeft = "5%";
+        customLabelInput.style.marginRight = "5%";
+        customLabelInput.style.borderRadius = "5px";
+        attributeInput.appendChild(customLabelInput);
+
+        // Show custom label input if "Custom Label" is selected
+        selectBox.addEventListener("change", () => {
+          if (selectBox.value === "custom") {
+            customLabelInput.style.display = "block";
+          } else {
+            customLabelInput.style.display = "none";
+          }
+        });
       }
 
       let buttonsContainer = document.createElement("div");
-      buttonsContainer.style = "margin-top: 10px; display: flex; justify-content: flex-end;";
+      buttonsContainer.style.marginTop = "10px";
+      buttonsContainer.style.display = "flex";
+      buttonsContainer.style.justifyContent = "flex-end";
+      buttonsContainer.style.width = "90%";
+      buttonsContainer.style.marginLeft = "5%";
+      buttonsContainer.style.marginRight = "5%";
 
       let importButton = createButton("Import", "#8BC34A", "#689F38", "button");
       importButton.onclick = () => {
+        // Check if "Custom Label" is selected and the input for it is empty
+        if (selectBox.value === "custom" && customLabelInput.value.trim() === "") {
+          // Display error message using WazeWrap
+          WazeWrap.Alerts.error(scriptName, "Please enter a custom label expression when selecting 'Custom Label'.");
+          return; // Exit the function to prevent resolving
+        }
+
         document.body.removeChild(overlay);
-        // Resolve with selected value or "NONE" if "No Labels" is chosen
-        resolve(selectBox && selectBox.options.length > 0 ? selectBox.value : "No Labels");
+
+        // Resolve with custom label if "Custom Label" is chosen and has input, else resolve with selected value
+        if (selectBox.value === "custom" && customLabelInput.value.trim() !== "") {
+          resolve(customLabelInput.value.trim());
+        } else {
+          resolve(selectBox && selectBox.options.length > 0 ? selectBox.value : " ");
+        }
       };
 
       let cancelButton = createButton("Cancel", "#E57373", "#D32F2F", "button");
@@ -1431,59 +1556,17 @@ var geometries = function () {
 
       let overlay = document.createElement("div");
       overlay.id = "presentFeaturesAttributesOverlay";
-      overlay.style = "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;";
+      overlay.style.position = "fixed";
+      overlay.style.top = "0";
+      overlay.style.left = "0";
+      overlay.style.width = "100%";
+      overlay.style.height = "100%";
+      overlay.style.background = "rgba(0,0,0,0.5)";
+      overlay.style.zIndex = "1000";
       overlay.appendChild(attributeInput);
 
       document.body.appendChild(overlay);
     });
-  }
-
-  /****************************************************************************************
-   * convertWKTToGeoJSON
-   *
-   * Description:
-   * Converts Well-Known Text (WKT) string content into a GeoJSON FeatureCollection. Each line of WKT is interpreted
-   * as an individual feature, converted into GeoJSON format, and collected into a single FeatureCollection object.
-   * This function also handles errors in WKT parsing by logging them and excluding problematic lines from the result.
-   *
-   * Parameters:
-   * @param {string} wktContent - The raw WKT content with each geometry separated by a newline.
-   * @param {string} filename - The name of the file being processed, used to label features.
-   *
-   * Returns:
-   * @returns {Object} - A GeoJSON FeatureCollection composed of features converted from the WKT lines.
-   *
-   * Behavior:
-   * - Splits the WKT content into individual lines and trims whitespace.
-   * - Filters out any empty lines to ensure only valid data is processed.
-   * - Attempts to parse each line into a GeoJSON geometry, wrapping it in a feature with a property referencing the filename.
-   * - Logs parsing errors for any line that cannot be converted, continuing with the rest.
-   * - Collects all successfully parsed features into a FeatureCollection, excluding any null results from errors.
-   *******************************************************************************************/
-  function convertWKTToGeoJSON(wktContent, filename) {
-    let wktLines = wktContent
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-
-    let features = wktLines
-      .map((line) => {
-        try {
-          let wktObj = new Wkt.Wkt();
-          wktObj.read(line);
-          return {
-            type: "Feature",
-            geometry: wktObj.toJson(),
-            properties: { Name: `${filename}` },
-          };
-        } catch (error) {
-          console.error(`${scriptName}: Error parsing WKT line:`, line, error);
-          return null;
-        }
-      })
-      .filter((feature) => feature !== null);
-
-    return { type: "FeatureCollection", features: features };
   }
 
   /*************************************************************************************
@@ -1727,9 +1810,9 @@ var geometries = function () {
       }
     }
     tryCreateFormat("GEOJSON", OpenLayers.Format.GeoJSON);
-    tryCreateFormat("WKT", Wkt.Wkt); //  use wicket.js to convert all WKT to geoJSON before parsefile() Wkt.read() Wkt.toJSON(), it is a better parser and more statble then OpenLayers.Format.WKT
+    tryCreateFormat("WKT", GeoWKTer); // use GeoWKTer.js to convert all WKT to geoJSON before parsefile() GeoWKTer.read() GeoWKTer.toGeoJSON(), it is a better parser with some basic error handeling compared to OpenLayers.Format.WKT
     tryCreateFormat("KML", OpenLayers.Format.KML);
-    tryCreateFormat("GPX", GeoGPXer); //use GeoGPXer.js to convert all GPX to geoJSON before parsefile() GeoGPXer.read() GeoGPXer.toGeoJSON(), GeoGPXer extracts the GPX <extention> tags where OL.Format.GPX does not.
+    tryCreateFormat("GPX", GeoGPXer); // use GeoGPXer.js to convert all GPX to geoJSON before parsefile() GeoGPXer.read() GeoGPXer.toGeoJSON(), GeoGPXer extracts the GPX <extention> tags where OL.Format.GPX does not.
     tryCreateFormat("GML", OpenLayers.Format.GML);
     return { formats, formathelp };
   }
