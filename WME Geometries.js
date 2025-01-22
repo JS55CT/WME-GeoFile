@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2025.01.18.01
+// @version             2025.01.22.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -14,8 +14,10 @@
 // @require             https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
 // @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/KML.js
 // @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/GML.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/OSM.js
 // @require             https://update.greasyfork.org/scripts/523986/1521862/GeoWKTer.js
 // @require             https://update.greasyfork.org/scripts/523870/1521199/GeoGPXer.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/shpjs/6.1.0/shp.js
 // @grant               none
 // @license             MIT
 // @original-author     Timbones
@@ -25,7 +27,7 @@
 
 /********
  * TO DO LIST:
- *  1. Update Labels for line feachers for pathLabel? and pathLabelCurve?
+ *  1. Update Labels for line feachers for pathLabel? and pathLabelCurve?  Need to understand installPathFollowingLabels() more.
  *********/
 
 var geometries = function () {
@@ -977,87 +979,113 @@ var geometries = function () {
    * of the layer information.
    *
    * Process:
-   * - Initializes by logging the function invocation if debugging is enabled.
    * - Captures a file from a user's file input and determines its extension and name.
    * - Collects styling and configuration options from the user interface through DOM elements.
    * - Validates user-selected file format against supported formats, handling any unsupported formats with an error message.
-   * - Leverages a `FileReader` to asynchronously read the file's contents.
-   * - For WKT files, reads each line individually, converting them into separate GeoJSON features, creating a versatile
-   *   GeoJSON FeatureCollection for map integration.
-   * - Constructs a `fileObj` containing converted data, styling, and format information for the specified file.
+   * - Leverages a `FileReader` to asynchronously read the file's contents and creates a `fileObj`.
    * - Calls `parseFile` to interpret `fileObj`, creating and configuring the geometry layers on the map.
    * - Updates persistent storage with compressed data to save the state of added geometrical layers.
    *
    * Notes:
    * - Operates within a larger system context, relying on global variables such as `formats` for file format validation.
-   * - Incorporates detailed logging when debugging is active to assist in troubleshooting and confirming function success.
    *************************************************************************/
+
   function addGeometryLayer() {
     if (debug) console.log(`${scriptName}: addGeometryLayer(): called`);
 
-    let fileList = document.getElementById("GeometryFile");
-    let file = fileList.files[0];
+    const fileList = document.getElementById("GeometryFile");
+    const file = fileList.files[0];
     fileList.value = "";
-    let fileext = file.name.split(".").pop();
-    let filename = file.name.replace("." + fileext, "");
-    fileext = fileext.toUpperCase();
 
-    // Add variables from Options input section
-    let color = document.getElementById("color").value;
-    let fillOpacity = document.getElementById("fill_opacity").value;
-    let fontsize = document.getElementById("font_size").value;
-    let lineopacity = document.getElementById("line_stroke_opacity").value;
-    let linesize = document.getElementById("line_size").value;
-    let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
-    let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
+    const fileName = file.name;
+    const lastDotIndex = fileName.lastIndexOf(".");
 
-    // Check if format is supported
-    let parser = formats[fileext];
-    if (typeof parser === "undefined") {
-      console.error(`${scriptName}: addGeometryLayer(): ${fileext} format not supported :(`);
-      WazeWrap.Alerts.error(scriptName, `${fileext} format not supported :(`);
-      return;
-    }
+    const fileext = lastDotIndex !== -1 ? fileName.substring(lastDotIndex + 1).toUpperCase() : "";
+    const filename = lastDotIndex !== -1 ? fileName.substring(0, lastDotIndex) : fileName;
 
-    let reader = new FileReader();
+    // Collect configuration options from UI
+    const color = document.getElementById("color").value;
+    const fillOpacity = document.getElementById("fill_opacity").value;
+    const fontsize = document.getElementById("font_size").value;
+    const lineopacity = document.getElementById("line_stroke_opacity").value;
+    const linesize = document.getElementById("line_size").value;
+    const linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
+    const labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
+
+    const reader = new FileReader();
 
     reader.onload = function (e) {
       requestAnimationFrame(() => {
         try {
           let fileObj;
-          if (fileext === "WKT") {
-            if (debug) console.log(`${scriptName}: WKT file detected, converting each line to individual GeoJSON features...`);
+          switch (fileext) {
+            case "ZIP":
+              shp(e.target.result)
+                .then((geojson) => {
+                  if (debug) console.log(`${scriptName}: ZIP file processed, resulting GeoJSON`, geojson);
+                  fileObj = new layerStoreObj(geojson, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "SHP");
+                  parseFile(fileObj);
+                })
+                .catch(handleError("ZIP shapefile"));
+              break;
 
-            // Instantiate GeoWKTer and convert WKT to GeoJSON
-            let geoWKTer = new GeoWKTer();
-            let wktData = geoWKTer.read(e.target.result, filename); // Read the WKT content
-            if (debug) console.log(`${scriptName}: WKT file detected, Raw PARSED WKT`, wktData);
-            let WKTtoGeoJSON = geoWKTer.toGeoJSON(wktData); // Convert to GeoJSON
-            if (debug) console.log(`${scriptName}: WKT converted to GeoJSON`, WKTtoGeoJSON);
+            case "WKT":
+              if (debug) console.log(`${scriptName}: WKT file detected, converting to GeoJSON...`);
+              try {
+                const geoWKTer = new GeoWKTer();
+                const wktData = geoWKTer.read(e.target.result, filename);
+                const WKTtoGeoJSON = geoWKTer.toGeoJSON(wktData);
+                fileObj = new layerStoreObj(WKTtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                parseFile(fileObj);
+              } catch (error) {
+                handleError("WKT conversion")(error);
+              }
+              break;
 
-            fileObj = new layerStoreObj(WKTtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
-          } else if (fileext === "GPX") {
-            // Use GeoGPXer to convert GPX to GeoJSON
-            let geoGPXer = new GeoGPXer();
-            let gpxDoc = geoGPXer.read(e.target.result);
-            if (debug) console.log(`${scriptName}: GPX file detected, Raw GPX XML`, gpxDoc);
-            let geoJsonData = geoGPXer.toGeoJSON(gpxDoc);
-            if (debug) console.log(`${scriptName}: GPX converted to GeoJSON`, geoJsonData);
+            case "GPX":
+              try {
+                const geoGPXer = new GeoGPXer();
+                const gpxDoc = geoGPXer.read(e.target.result);
+                const GPXtoGeoJSON = geoGPXer.toGeoJSON(gpxDoc);
+                fileObj = new layerStoreObj(GPXtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                parseFile(fileObj);
+              } catch (error) {
+                handleError("GPX conversion")(error);
+              }
+              break;
 
-            fileObj = new layerStoreObj(geoJsonData, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
-          } else {
-            fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+            case "GEOJSON":
+            case "KML":
+            case "GML":
+            case "OSM":
+              try {
+                fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                parseFile(fileObj);
+              } catch (error) {
+                handleError(`${fileext} parsing`)(error);
+              }
+              break;
+
+            default:
+              handleError("unsupported file type")(new Error("Unsupported file type"));
+              break;
           }
-
-          parseFile(fileObj); // Call parseFile directly
         } catch (error) {
-          console.error(`${scriptName}: addGeometryLayer(): Error processing file:`, error);
-          WazeWrap.Alerts.error(scriptName, `Error processing file :(`);
+          handleError("file")(error);
         }
       });
     };
-    reader.readAsText(file);
+
+    fileext === "ZIP" ? reader.readAsArrayBuffer(file) : reader.readAsText(file);
+
+    function handleError(context) {
+      return (error) => {
+        console.error(`${scriptName}: Error processing ${context}:`, error);
+        WazeWrap.Alerts.error(scriptName, `Error processing ${context} :(`);
+      };
+    }
   }
+
   /*************************************************************************************
    * parseFile
    *
@@ -1153,7 +1181,7 @@ var geometries = function () {
     } else {
       if (debug) console.log(`${scriptName}: parseFile(): features.slice:`, features.slice(0, 9));
       // Await user interaction to get the label attribute when it's not already set
-      presentFeaturesAttributes(features.slice(0, 9), features.length)
+      presentFeaturesAttributes(features.slice(0, 50), features.length)
         .then((selectedAttribute) => {
           if (selectedAttribute) {
             //&& typeof features[0].attributes[selectedAttribute] === "string"
@@ -1215,17 +1243,22 @@ var geometries = function () {
           formatLabel: function (feature) {
             let labelTemplate = fileObj.labelattribute;
 
-            if (!labelTemplate || labelTemplate === " ") {
+            if (!labelTemplate || labelTemplate.trim() === "") {
               return "";
             }
-
-            if (feature.attributes.hasOwnProperty(labelTemplate)) {
-              return feature.attributes[labelTemplate] || "";
-            }
-
+            // Handel new lines  /n
             labelTemplate = labelTemplate.replace(/\\n/g, "\n");
-
+            // Handle both direct names and templated inputs with placeholders
             try {
+              // Check if `labelTemplate` is a direct attribute name without placeholder format
+              if (!labelTemplate.includes("${")) {
+                if (feature.attributes.hasOwnProperty(labelTemplate)) {
+                  return feature.attributes[labelTemplate] || "";
+                }
+                return ""; // Return empty if the attribute is directly named and not found
+              }
+
+              // Handle templated inputs like '${name}'
               labelTemplate = labelTemplate
                 .replace(/\${(.*?)}/g, (match, attributeName) => {
                   attributeName = attributeName.trim();
@@ -1234,7 +1267,7 @@ var geometries = function () {
                     return feature.attributes[attributeName] || "";
                   }
 
-                  return "";
+                  return ""; // Replace with empty if attribute not found
                 })
                 .trim();
             } catch (error) {
@@ -1254,6 +1287,8 @@ var geometries = function () {
             return "1";
           },
         };
+
+        if (debug) console.log(`${scriptName}: labelContext() = : ${labelContext}`);
 
         const layerStyle = {
           stroke: true,
@@ -1484,9 +1519,14 @@ var geometries = function () {
           FacilityCarried: U.S. ROUTE 6
           FeatureCrossed: BIG RIVER
         
-        Example: 
-        "#:\${BridgeNumber}\\n\${FacilityCarried} over\\n\${FeatureCrossed}" 
+        Example: (explicit new lines formatting)
+        #:\${BridgeNumber}\\n\${FacilityCarried} over\\n\${FeatureCrossed}
         
+        Example: (multi-line formatting)
+        #:\${BridgeNumber}
+        \${FacilityCarried} over
+        \${FeatureCrossed}
+
         Expected Output: 
           #:01995
           U.S. ROUTE 6 over
@@ -1783,37 +1823,49 @@ var geometries = function () {
    * Process:
    * - Verifies the availability of the `Wkt` library, logging an error if it is not loaded.
    * - Defines a helper function `tryCreateFormat` to instantiate format objects and log successes or errors.
-   * - Attempts to create format instances for GEOJSON, WKT, KML, GPX, and GML using corresponding constructors.
+   * - Attempts to create format instances for GEOJSON, WKT, KML, GPX, GML, OSM, and ZIP files of (SHP,SHX,DBF) using corresponding constructors.
    * - Continually builds a `formathelp` string that lists all formats successfully instantiated.
    * - Returns an object containing both the instantiated formats and the help string.
    *
    * Notes:
-   * - Uses `wicket.js` to handle WKT data due to its parsing stability compared to OpenLayers for this format.
    * - Ensures debug logs are provided for tracing function execution when `debug` mode is active.
    **************************************************************/
   function createLayersFormats() {
     if (debug) console.log(`${scriptName}: createLayersFormats(): called`);
-
-    if (typeof Wkt === "undefined") {
-      console.error(`${scriptName}: Wkt is not available. Ensure the library is correctly included via @require.`);
-    }
 
     let formats = {};
     let formathelp = "";
 
     function tryCreateFormat(formatName, FormatConstructor) {
       try {
-        formats[formatName] = new FormatConstructor();
-        formathelp += `${formatName} | `;
+        if (typeof FormatConstructor === "function") {
+          formats[formatName] = new FormatConstructor();
+          console.log(`${scriptName}: Successfully created format: ${formatName}`);
+          formathelp += `${formatName} | `;
+        } else {
+          throw new Error(`${formatName} is not a valid constructor.`);
+        }
       } catch (error) {
-        console.error(`${formatName} format is not supported:`, error);
+        console.error(`${scriptName}: ${formatName} format is not supported:`, error);
       }
     }
+
     tryCreateFormat("GEOJSON", OpenLayers.Format.GeoJSON);
-    tryCreateFormat("WKT", GeoWKTer); // use GeoWKTer.js to convert all WKT to geoJSON before parsefile() GeoWKTer.read() GeoWKTer.toGeoJSON(), it is a better parser with some basic error handeling compared to OpenLayers.Format.WKT
+    tryCreateFormat("WKT", GeoWKTer);
     tryCreateFormat("KML", OpenLayers.Format.KML);
-    tryCreateFormat("GPX", GeoGPXer); // use GeoGPXer.js to convert all GPX to geoJSON before parsefile() GeoGPXer.read() GeoGPXer.toGeoJSON(), GeoGPXer extracts the GPX <extention> tags where OL.Format.GPX does not.
+    tryCreateFormat("GPX", GeoGPXer);
     tryCreateFormat("GML", OpenLayers.Format.GML);
+    tryCreateFormat("OSM", OpenLayers.Format.OSM);
+
+    // Add support for shapefile in ZIP form using shpjs
+    // Note: 'shpjs' is not a constructor like other formats. It provides
+    // a function 'shp()' used for parsing ZIP files containing Shapefiles,
+    // and converting them to GEOJSON output.
+    formats["ZIP"] = "shpjs"; // Using a string to denote usage of shpjs for ZIP
+    console.log(`${scriptName}: Successfully created format: ZIP (shapefile)`);
+    formathelp += "ZIP(SHP,SHX,DBF) | ";
+
+    console.log(`${scriptName}: Finished loading formats.`);
     return { formats, formathelp };
   }
 
@@ -1963,6 +2015,218 @@ var geometries = function () {
       iCaretDown.classList.toggle("upside-down");
       ulCollapsible.classList.toggle("collapse-layer-switcher-group");
     };
+  }
+
+  function installPathFollowingLabels() {
+    if (debug) console.log(`${scriptName}: Patching Openlayers.Style with installPathFollowingLabels()........`);
+
+    // Copyright (c) 2015 by Jean-Marc.Viglino [at]ign.fr
+    // Dual-licensed under the CeCILL-B Licence (http://www.cecill.info/)
+    // and the Beerware license (http://en.wikipedia.org/wiki/Beerware),
+    // feel free to use and abuse it in your projects (the code, not the beer ;-).
+    //
+    //* Overwrite the SVG function to allow text along a path
+    //*	setStyle function
+    //*
+    //*	Add new options to the Openlayers.Style
+
+    // pathLabel: {String} Label to draw on the path
+    // pathLabelXOffset: {String} Offset along the line to start drawing text in pixel or %, default: "50%"
+    // pathLabelYOffset: {Number} Distance of the line to draw the text
+    // pathLabelCurve: {String} Smooth the line the label is drawn on (empty string for no)
+    // pathLabelReadable: {String} Make the label readable (empty string for no)
+
+    // *	Extra standard values : all label and text values
+
+    //  *
+    //  * Method: removeChildById
+    //  * Remove child in a node.
+    //  *
+
+    function removeChildById(node, id) {
+      if (node.querySelector) {
+        var c = node.querySelector("#" + id);
+        if (c) node.removeChild(c);
+        return;
+      }
+      // For old browsers
+      var c = node.childNodes;
+      if (c)
+        for (var i = 0; i < c.length; i++) {
+          if (c[i].id === id) {
+            node.removeChild(c[i]);
+            return;
+          }
+        }
+    }
+
+    //  *
+    //  * Method: setStyle
+    //  * Use to set all the style attributes to a SVG node.
+    //  *
+    //  * Takes care to adjust stroke width and point radius to be
+    //  * resolution-relative
+    //  *
+    //  * Parameters:
+    //  * node - {SVGDomElement} An SVG element to decorate
+    //  * style - {Object}
+    //  * options - {Object} Currently supported options include
+    //  *                              'isFilled' {Boolean} and
+    //  *                              'isStroked' {Boolean}
+
+    var setStyle = OpenLayers.Renderer.SVG.prototype.setStyle;
+    OpenLayers.Renderer.SVG.LABEL_STARTOFFSET = { l: "0%", r: "100%", m: "50%" };
+
+    OpenLayers.Renderer.SVG.prototype.pathText = function (node, style, suffix) {
+      var label = this.nodeFactory(null, "text");
+      label.setAttribute("id", node._featureId + "_" + suffix);
+      if (style.fontColor) label.setAttributeNS(null, "fill", style.fontColor);
+      if (style.fontStrokeColor) label.setAttributeNS(null, "stroke", style.fontStrokeColor);
+      if (style.fontStrokeWidth) label.setAttributeNS(null, "stroke-width", style.fontStrokeWidth);
+      if (style.fontOpacity) label.setAttributeNS(null, "opacity", style.fontOpacity);
+      if (style.fontFamily) label.setAttributeNS(null, "font-family", style.fontFamily);
+      if (style.fontSize) label.setAttributeNS(null, "font-size", style.fontSize);
+      if (style.fontWeight) label.setAttributeNS(null, "font-weight", style.fontWeight);
+      if (style.fontStyle) label.setAttributeNS(null, "font-style", style.fontStyle);
+      if (style.labelSelect === true) {
+        label.setAttributeNS(null, "pointer-events", "visible");
+        label._featureId = node._featureId;
+      } else {
+        label.setAttributeNS(null, "pointer-events", "none");
+      }
+
+      function getpath(pathStr, readeable) {
+        var npath = pathStr.split(",");
+        var pts = [];
+        if (!readeable || Number(npath[0]) - Number(npath[npath.length - 2]) < 0) {
+          while (npath.length) pts.push({ x: Number(npath.shift()), y: Number(npath.shift()) });
+        } else {
+          while (npath.length) pts.unshift({ x: Number(npath.shift()), y: Number(npath.shift()) });
+        }
+        return pts;
+      }
+
+      var path = this.nodeFactory(null, "path");
+      var tpid = node._featureId + "_t" + suffix;
+      var tpath = node.getAttribute("points");
+      if (style.pathLabelCurve) {
+        var pts = getpath(tpath, style.pathLabelReadable);
+        var p = pts[0].x + " " + pts[0].y;
+        var dx, dy, s1, s2;
+        dx = (pts[0].x - pts[1].x) / 4;
+        dy = (pts[0].y - pts[1].y) / 4;
+        for (var i = 1; i < pts.length - 1; i++) {
+          p += " C " + (pts[i - 1].x - dx) + " " + (pts[i - 1].y - dy);
+          dx = (pts[i - 1].x - pts[i + 1].x) / 4;
+          dy = (pts[i - 1].y - pts[i + 1].y) / 4;
+          s1 = Math.sqrt(Math.pow(pts[i - 1].x - pts[i].x, 2) + Math.pow(pts[i - 1].y - pts[i].y, 2));
+          s2 = Math.sqrt(Math.pow(pts[i + 1].x - pts[i].x, 2) + Math.pow(pts[i + 1].y - pts[i].y, 2));
+          p += " " + (pts[i].x + (s1 * dx) / s2) + " " + (pts[i].y + (s1 * dy) / s2);
+          dx *= s2 / s1;
+          dy *= s2 / s1;
+          p += " " + pts[i].x + " " + pts[i].y;
+        }
+        p += " C " + (pts[i - 1].x - dx) + " " + (pts[i - 1].y - dy);
+        dx = (pts[i - 1].x - pts[i].x) / 4;
+        dy = (pts[i - 1].y - pts[i].y) / 4;
+        p += " " + (pts[i].x + dx) + " " + (pts[i].y + dy);
+        p += " " + pts[i].x + " " + pts[i].y;
+
+        path.setAttribute("d", "M " + p);
+      } else {
+        if (style.pathLabelReadable) {
+          var pts = getpath(tpath, style.pathLabelReadable);
+          var p = "";
+          for (var i = 0; i < pts.length; i++) p += " " + pts[i].x + " " + pts[i].y;
+          path.setAttribute("d", "M " + p);
+        } else path.setAttribute("d", "M " + tpath);
+      }
+      path.setAttribute("id", tpid);
+
+      var defs = this.createDefs();
+      removeChildById(defs, tpid);
+      defs.appendChild(path);
+
+      var textPath = this.nodeFactory(null, "textPath");
+      textPath.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", "#" + tpid);
+      var align = style.labelAlign || OpenLayers.Renderer.defaultSymbolizer.labelAlign;
+      label.setAttributeNS(null, "text-anchor", OpenLayers.Renderer.SVG.LABEL_ALIGN[align[0]] || "middle");
+      textPath.setAttribute("startOffset", style.pathLabelXOffset || OpenLayers.Renderer.SVG.LABEL_STARTOFFSET[align[0]] || "50%");
+      label.setAttributeNS(null, "dominant-baseline", OpenLayers.Renderer.SVG.LABEL_ALIGN[align[1]] || "central");
+      if (style.pathLabelYOffset) label.setAttribute("dy", style.pathLabelYOffset);
+      //textPath.setAttribute('method','stretch');
+      //textPath.setAttribute('spacing','auto');
+
+      textPath.textContent = style.pathLabel;
+      label.appendChild(textPath);
+
+      removeChildById(this.textRoot, node._featureId + "_" + suffix);
+      this.textRoot.appendChild(label);
+    };
+
+    OpenLayers.Renderer.SVG.prototype.setStyle = function (node, style, options) {
+      if (node._geometryClass === "OpenLayers.Geometry.LineString" && style.pathLabel) {
+        if (node._geometryClass === "OpenLayers.Geometry.LineString" && style.pathLabel) {
+          var drawOutline = !!style.labelOutlineWidth;
+          // First draw text in halo color and size and overlay the
+          // normal text afterwards
+          if (drawOutline) {
+            var outlineStyle = OpenLayers.Util.extend({}, style);
+            outlineStyle.fontColor = outlineStyle.labelOutlineColor;
+            outlineStyle.fontStrokeColor = outlineStyle.labelOutlineColor;
+            outlineStyle.fontStrokeWidth = style.labelOutlineWidth;
+            if (style.labelOutlineOpacity) outlineStyle.fontOpacity = style.labelOutlineOpacity;
+            delete outlineStyle.labelOutlineWidth;
+            this.pathText(node, outlineStyle, "txtpath0");
+          }
+          this.pathText(node, style, "txtpath");
+          setStyle.apply(this, arguments);
+        }
+      } else setStyle.apply(this, arguments);
+      return node;
+    };
+
+    //  *
+    //  * Method: drawGeometry
+    //  * Remove the textpath if no geometry is drawn.
+    //  *
+    //  * Parameters:
+    //  * geometry - {<OpenLayers.Geometry>}
+    //  * style - {Object}
+    //  * featureId - {String}
+    //  *
+    //  * Returns:
+    //  * {Boolean} true if the geometry has been drawn completely; null if
+    //  *     incomplete; false otherwise
+
+    var drawGeometry = OpenLayers.Renderer.SVG.prototype.drawGeometry;
+    OpenLayers.Renderer.SVG.prototype.drawGeometry = function (geometry, style, id) {
+      var rendered = drawGeometry.apply(this, arguments);
+      if (rendered === false) {
+        removeChildById(this.textRoot, id + "_txtpath");
+        removeChildById(this.textRoot, id + "_txtpath0");
+      }
+      return rendered;
+    };
+
+    // *
+    // * Method: eraseGeometry
+    // * Erase a geometry from the renderer. In the case of a multi-geometry,
+    // *     we cycle through and recurse on ourselves. Otherwise, we look for a
+    // *     node with the geometry.id, destroy its geometry, and remove it from
+    // *     the DOM.
+    // *
+    // * Parameters:
+    // * geometry - {<OpenLayers.Geometry>}
+    // * featureId - {String}
+
+    var eraseGeometry = OpenLayers.Renderer.SVG.prototype.eraseGeometry;
+    OpenLayers.Renderer.SVG.prototype.eraseGeometry = function (geometry, featureId) {
+      eraseGeometry.apply(this, arguments);
+      removeChildById(this.textRoot, featureId + "_txtpath");
+      removeChildById(this.textRoot, featureId + "_txtpath0");
+    };
+    if (debug) console.log(`${scriptName}: installPathFollowingLabels() installed!`);
   }
 
   // Initialize your script

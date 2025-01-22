@@ -1,6 +1,6 @@
 # WME Geometry (JS55CT Forked)
 
-WME Geometry File Importer allows you to import various geometry files (supported formats: GeoJSON, GML, WKT, KML, and GPX) into the Waze Map Editor (WME). The script enhances the mapping utilities offered by WME by overlaying geospatial data directly onto the maps.
+WME Geometry File Importer allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME). The script enhances the mapping utilities offered by WME by overlaying geospatial data directly onto the maps.
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@ WME Geometry File Importer allows you to import various geometry files (supporte
 
 ## About
 
-The WME Geometry File Importer allows Waze map editors to benefit from importing external geometry files for better navigation and map editing. It supports various widely-used formats and enables detailed customization of how these geometries are presented in the editor.
+The WME Geometry File Importer allows Waze map editors to benefit from importing external geometry files for better map editing. It supports various widely-used formats and enables detailed customization of how these geometries are presented in the editor.
 
 ## Installation
 
@@ -32,7 +32,7 @@ To install this user script, you need to have a userscript manager installed in 
 ``` https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js ```
 
 - Click on the **"Import"** button.
-- ou will be directed to a page that shows the script. Click the **"Install"** button.
+- you will be directed to a page that shows the script. Click the **"Install"** button.
 
 ### Add the Script via URL via Greasemonkey
 
@@ -52,21 +52,21 @@ Once the script is installed and running, it will add a 'GEO' tab to the WME sid
 - Import geometry files by selecting them from your computer.
 - Customize how these geometry files are displayed on the map (color, font size, fill opacity, line style, and label positions).
 - Clear all imported layers or selectively remove items.
-- Import Well-Known Text (WKT) directly into the editor.
+- Import Well-Known Text (WKT) directly into the editor via the GEO tab import functionality.
 - Draw state boundaries based on the state in focus within WME.
 
 ## Enhancements
 
-Relative to the original code by Timbones, the following enhancements have been made:
+Built on the original code by Timbones:
 
 1. **User Interface Improvements**:
    - Added a user-friendly GEO tab within the WME Scripts sidebar for managing geometry imports and settings.
    - Added styling to form elements (buttons, sliders, labels, etc.) for a better user experience.
-   - Added user input section for label value for Geo Files (GeoJSON, KML, etc) that have attributes.
+   - The script will detect and handle labels based on attributes in your file.
 
 2. **Customization Options**:
    - Added options for customizing layer properties such as color, font size, fill opacity, line style, and label positions.
-   - Enhanced label mechanics to display labels based on customizable conditions.
+   - Custom Labels: You can define custom labels using placeholders (e.g., ${attributeName}).
 
 3. **State Boundary Drawing**:
    - Included state boundary drawing functionality with customizable layer formatting that persists in local storage.
@@ -79,6 +79,9 @@ Relative to the original code by Timbones, the following enhancements have been 
 5. **Improved File Handling**:
    - Streamlined the file import process with improved error handling for unsupported file formats.
    - Automatically converts WKT input to GeoJSON before rendering for easier integration with WME.
+   - Supports Multi Line WKT files!
+   - Automatically converts GPX input including the \<extension> tags to GeoJSON before rendering for easier integration with WME.
+   - Automatically converts ESRI Shapefiles in .ZIP format to GeoJSON before rendering for easier integration with WME.
    - Supports Multi Line WKT files!
 
 6. **Enhanced Label Management**:
