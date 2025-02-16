@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2025.01.22.01
+// @version             2025.02.16.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -12,13 +12,19 @@
 // @exclude             https://www.waze.com/*user/*editor/*
 // @require             https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js
 // @require             https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
-// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/KML.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/WKT.js
 // @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/GML.js
-// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/OSM.js
-// @require             https://update.greasyfork.org/scripts/523986/1521862/GeoWKTer.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/GPX.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/KML.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/GeoJSON.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.15.0/proj4-src.js
+// @require             https://update.greasyfork.org/scripts/524747/1528426/GeoKMLer.js
+// @require             https://update.greasyfork.org/scripts/527113/1538327/GeoKMZer.js
+// @require             https://update.greasyfork.org/scripts/523986/1528425/GeoWKTer.js
 // @require             https://update.greasyfork.org/scripts/523870/1521199/GeoGPXer.js
-// @require             https://cdnjs.cloudflare.com/ajax/libs/shpjs/6.1.0/shp.js
-// @grant               none
+// @require             https://update.greasyfork.org/scripts/526229/1533569/GeoGMLer.js
+// @require             https://update.greasyfork.org/scripts/526996/1537647/GeoSHPer.js
+// @grant               unsafeWindow
 // @license             MIT
 // @original-author     Timbones
 // @original-contributors wlodek76, Twister-UK
@@ -30,20 +36,33 @@
  *  1. Update Labels for line feachers for pathLabel? and pathLabelCurve?  Need to understand installPathFollowingLabels() more.
  *********/
 
+/*
+External Variables and Objects:
+GM_info: 
+unsafeWindow: 
+W: Represents the global Waze Map Editor object
+WazeWrap: external utility library for interacting with the Waze Map Editor environment.
+LZString: library used for compressing and decompressing strings.
+OpenLayers: A global object referring to the OpenLayers library
+proj4: Proj4-src.js version 2.15.0
+GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/functions used for parsing geospatial data formats.
+*/
+
 var geometries = function () {
   "use strict";
   const scriptMetadata = GM_info.script;
   const scriptName = scriptMetadata.name;
   let maxlabels = 100000; // maximum number of features that will be shown with labels
-
   let geolist;
   let debug = false;
-
-  let { formats, formathelp } = createLayersFormats();
-
+  let useWmeSDK = false;
+  let forceGeoJSON = false; // Default to using OpenLayers Parser
+  let formats;
+  let formathelp;
   let layerindex = 0;
   let storedLayers = [];
   let groupToggler;
+  let projectionMap = {};
 
   function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelattribute, orgFileext) {
     this.fileContent = fileContent;
@@ -58,6 +77,74 @@ var geometries = function () {
     this.labelpos = labelpos;
     this.labelattribute = labelattribute;
     this.orgFileext = orgFileext;
+  }
+
+  let wmeSDK; // Declare wmeSDK globally
+
+  // Ensure SDK_INITIALIZED is available
+  if (unsafeWindow.SDK_INITIALIZED) {
+    unsafeWindow.SDK_INITIALIZED.then(bootstrap).catch((err) => {
+      console.error(`${scriptName}: SDK initialization failed`, err);
+    });
+  } else {
+    console.warn(`${scriptName}: SDK_INITIALIZED is undefined`);
+  }
+
+  function bootstrap() {
+    wmeSDK = unsafeWindow.getWmeSdk({
+      scriptId: scriptName.replaceAll(" ", ""),
+      scriptName: scriptName,
+    });
+
+    // Wait for both WME and WazeWrap to be ready
+    Promise.all([isWmeReady(), isWazeWrapReady()])
+      .then(() => {
+        console.log(`${scriptName}: All dependencies are ready.`);
+        // Initialize formats and formathelp here
+        ({ formats, formathelp } = createLayersFormats());
+        init();
+      })
+      .catch((error) => {
+        console.error(`${scriptName}: Error during bootstrap -`, error);
+      });
+  }
+
+  function isWmeReady() {
+    return new Promise((resolve, reject) => {
+      if (wmeSDK && wmeSDK.State.isReady() && wmeSDK.Sidebar && wmeSDK.LayerSwitcher && wmeSDK.Shortcuts && wmeSDK.Events) {
+        resolve();
+      } else {
+        wmeSDK.Events.once({ eventName: "wme-ready" })
+          .then(() => {
+            if (wmeSDK.Sidebar && wmeSDK.LayerSwitcher && wmeSDK.Shortcuts && wmeSDK.Events) {
+              console.log(`${scriptName}: WME is fully ready now.`);
+              resolve();
+            } else {
+              reject(`${scriptName}: Some SDK components are not loaded.`);
+            }
+          })
+          .catch((error) => {
+            console.error(`${scriptName}: Error while waiting for WME to be ready:`, error);
+            reject(error);
+          });
+      }
+    });
+  }
+
+  function isWazeWrapReady() {
+    return new Promise((resolve, reject) => {
+      (function check(tries = 0) {
+        if (unsafeWindow.WazeWrap && unsafeWindow.WazeWrap.Ready) {
+          resolve();
+        } else if (tries < 1000) {
+          setTimeout(() => {
+            check(++tries);
+          }, 500);
+        } else {
+          reject(`${scriptName}: WazeWrap took too long to load.`);
+        }
+      })();
+    });
   }
 
   /*************************************************************************************
@@ -82,10 +169,15 @@ var geometries = function () {
     // Parse any locally stored layer objects
     if (localStorage.WMEGeoLayers != undefined) {
       console.log(`${scriptName}: Loading Saved Layers ...`);
+      toggleParsingMessage(true);
+      const delayDuration = 300;
+      setTimeout(() => {
+
       storedLayers = JSON.parse(LZString.decompress(localStorage.WMEGeoLayers));
       for (layerindex = 0; layerindex < storedLayers.length; ++layerindex) {
         parseFile(storedLayers[layerindex]);
       }
+    }, delayDuration);
     } else {
       storedLayers = [];
     }
@@ -117,147 +209,98 @@ var geometries = function () {
    * - Incorporates CSS styling to maintain consistency with the WME environment and improve usability.
    *************************************************************************/
   function init() {
-    console.log(`${scriptName}: init() called .... Loading User Interface ...`);
+    console.log(`${scriptName}: Loading User Interface ...`);
 
-    const { tabLabel, tabPane } = W.userscripts.registerSidebarTab("WME Geometries");
-    tabLabel.innerText = "GEO";
-    W.userscripts.waitForElementConnected(tabPane).then(() => {
+    wmeSDK.Sidebar.registerScriptTab().then(({ tabLabel, tabPane }) => {
+      tabLabel.textContent = "GEO";
+      tabLabel.title = `${scriptName}`;
+
       let geobox = document.createElement("div");
-      geobox.style.padding = "10px";
-      geobox.style.backgroundColor = "#fff";
-      geobox.style.border = "2px solid #ddd";
-      geobox.style.borderRadius = "10px";
-      geobox.style.boxShadow = "2px 2px 10px rgba(0, 0, 0, 0.1)";
+      geobox.style.cssText = "padding: 10px; background-color: #fff; border: 2px solid #ddd; border-radius: 10px; box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);";
       tabPane.appendChild(geobox);
 
-      let geotitle = document.createElement("div"); //legend
+      let geotitle = document.createElement("div");
       geotitle.innerHTML = GM_info.script.name;
-      geotitle.style.textAlign = "center";
-      geotitle.style.fontSize = "1.1em";
-      geotitle.style.fontWeight = "bold";
-      geotitle.style.color = "#222";
+      geotitle.style.cssText = "text-align: center; font-size: 1.1em; font-weight: bold; color: #222;";
       geobox.appendChild(geotitle);
 
       let geoversion = document.createElement("div");
       geoversion.innerHTML = "v " + GM_info.script.version;
-      geoversion.style.textAlign = "center";
-      geoversion.style.fontSize = "0.9em";
-      geoversion.style.color = "#222";
+      geoversion.style.cssText = "text-align: center; font-size: 0.9em; color: #222;";
       geobox.appendChild(geoversion);
 
       let hr = document.createElement("hr");
-      hr.style.marginTop = "5px";
-      hr.style.marginBottom = "5px";
-      hr.style.border = "0";
-      hr.style.borderTop = "1px solid hsl(0, 0%, 93.5%)";
+      hr.style.cssText = "margin-top: 5px; margin-bottom: 5px; border: 0; border-top: 1px solid hsl(0, 0%, 93.5%);";
       geobox.appendChild(hr);
 
       geolist = document.createElement("ul");
-      geolist.style.margin = "5px 0";
-      geolist.style.padding = "5px";
+      geolist.style.cssText = "margin: 5px 0; padding: 5px;";
       geobox.appendChild(geolist);
 
       let geoform = document.createElement("form");
-      geoform.style.display = "flex";
-      geoform.style.flexDirection = "column";
-      geoform.style.gap = "0px";
-      geoform.id = "geoform"; // added for refrance in WKT text Area
+      geoform.style.cssText = "display: flex; flex-direction: column; gap: 0px;";
+      geoform.id = "geoform";
       geobox.appendChild(geoform);
 
-      // Create the container div
       let fileContainer = document.createElement("div");
-      fileContainer.style.position = "relative";
-      fileContainer.style.display = "inline-block";
+      fileContainer.style.cssText = "position: relative; display: inline-block;";
 
-      // Create the input element
       let inputfile = document.createElement("input");
       inputfile.type = "file";
       inputfile.id = "GeometryFile";
       inputfile.title = ".geojson, .gml or .wkt";
-
-      // Hide the actual input file element
-      inputfile.style.opacity = "0";
-      inputfile.style.position = "absolute";
-      inputfile.style.top = "0";
-      inputfile.style.left = "0";
-      inputfile.style.width = "100%";
-      inputfile.style.height = "100%";
-      inputfile.style.cursor = "pointer";
-      inputfile.style.pointerEvents = "none"; // Prevents inputfile from capturing events
-
-      // Create the custom label using the createButton function
-      let customLabel = createButton("Import GEO File", "#8BC34A", "#689F38", "label", "GeometryFile");
-
-      // Append the input file and custom label to the container
+      inputfile.style.cssText = "opacity: 0; position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: pointer; pointer-events: none;";
       fileContainer.appendChild(inputfile);
-      fileContainer.appendChild(customLabel);
 
-      // Append the container to the form
+      let customLabel = createButton("Import GEO File", "#8BC34A", "#689F38", "label", "GeometryFile");
+      fileContainer.appendChild(customLabel);
       geoform.appendChild(fileContainer);
 
-      // Add change event listener to the input file
       inputfile.addEventListener("change", addGeometryLayer, false);
 
       let notes = document.createElement("p");
-      notes.innerHTML = "<b>Formats:</b> " + formathelp + "<br> <b>EPSG:</b> 4326 | 4269 | 3857 | 3035 | 4267 |";
-      notes.style.color = "#555";
-      notes.style.display = "block";
-      notes.style.fontSize = "0.9em";
-      notes.style.marginLeft = "0px";
-      notes.style.marginBottom = "0px";
+      notes.innerHTML = `
+    <b>Formats:</b><br>
+    ${formathelp}<br>
+    <b>EPSG:</b> <br>
+    | 3035 | 3414 | 4214 | 4258 | 4267 | 4283 |<br>
+    | 4326 | 25832 | 26901->26923 | 27700 |<br>
+    | 32601->32660 | 32701->32760 |`;
+      notes.style.cssText = "color: #555; display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
       geoform.appendChild(notes);
 
-      // Create the Draw State Boundary Button
       let stateBoundaryButton = createButton("Draw State Boundary", "#87CEEB", "#4D9DD2", "input");
       stateBoundaryButton.id = "stateBoundary_btn";
       stateBoundaryButton.title = "Add boundary for Current Active State";
       stateBoundaryButton.addEventListener("click", drawStateBoundary);
       geoform.appendChild(stateBoundaryButton);
 
-      // Create a container for the color, font size, and fill opacity input fields
       let inputContainer = document.createElement("div");
-      inputContainer.style.display = "flex";
-      inputContainer.style.flexDirection = "column";
-      inputContainer.style.gap = "5px";
-      inputContainer.style.marginTop = "10px"; // Add space at the top
+      inputContainer.style.cssText = "display: flex; flex-direction: column; gap: 5px; margin-top: 10px;";
 
-      // Adding a horizontal break before Color and Font Size Position
       let hrElement1 = document.createElement("hr");
-      hrElement1.style.margin = "5px 0"; // Adjust margin to reduce vertical space
-      hrElement1.style.border = "0"; // Remove default border
-      hrElement1.style.borderTop = "1px solid #ddd"; // Add custom border
+      hrElement1.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid #ddd;";
       inputContainer.appendChild(hrElement1);
 
-      // Row for color and font size inputs
       let colorFontSizeRow = document.createElement("div");
-      colorFontSizeRow.style.display = "flex";
-      colorFontSizeRow.style.justifyContent = "normal";
-      colorFontSizeRow.style.alignItems = "center";
-      colorFontSizeRow.style.gap = "0px"; // Space between the inputs
+      colorFontSizeRow.style.cssText = "display: flex; justify-content: normal; align-items: center; gap: 0px;";
 
-      // Color input
       let input_color_label = document.createElement("label");
       input_color_label.setAttribute("for", "color");
       input_color_label.innerHTML = "Color: ";
-      input_color_label.style.fontWeight = "normal";
-      input_color_label.style.flexShrink = "0"; // Prevent the label from shrinking
-      input_color_label.style.marginRight = "5px"; // Add space between the label and input box
+      input_color_label.style.cssText = "font-weight: normal; flex-shrink: 0; margin-right: 5px;";
 
       let input_color = document.createElement("input");
       input_color.type = "color";
       input_color.id = "color";
       input_color.value = "#00bfff";
       input_color.name = "color";
-      input_color.style.width = "60px"; // Increase the width of the color input
+      input_color.style.cssText = "width: 60px;";
 
-      // Font Size
       let input_font_size_label = document.createElement("label");
       input_font_size_label.setAttribute("for", "font_size");
       input_font_size_label.innerHTML = "Font Size: ";
-      input_font_size_label.style.marginLeft = "40px";
-      input_font_size_label.style.fontWeight = "normal";
-      input_font_size_label.style.flexShrink = "0"; // Prevent the label from shrinking
-      input_font_size_label.style.marginRight = "5px"; // Add space between the label and input box
+      input_font_size_label.style.cssText = "margin-left: 40px; font-weight: normal; flex-shrink: 0; margin-right: 5px;";
 
       let input_font_size = document.createElement("input");
       input_font_size.type = "number";
@@ -267,28 +310,23 @@ var geometries = function () {
       input_font_size.name = "font_size";
       input_font_size.value = "12";
       input_font_size.step = "1.0";
-      input_font_size.style.width = "50px"; // Decrease the width of the font size input
-      input_font_size.style.textAlign = "center"; // Center the text inside the input box
+      input_font_size.style.cssText = "width: 50px; text-align: center;";
 
-      // Append elements to the color and font size row
       colorFontSizeRow.appendChild(input_color_label);
       colorFontSizeRow.appendChild(input_color);
       colorFontSizeRow.appendChild(input_font_size_label);
       colorFontSizeRow.appendChild(input_font_size);
-
-      // Append the color and font size row to the input container
       inputContainer.appendChild(colorFontSizeRow);
 
       // Row for fill opacity input
       let fillOpacityRow = document.createElement("div");
-      fillOpacityRow.style.display = "flex";
-      fillOpacityRow.style.flexDirection = "column";
+      fillOpacityRow.style.cssText = `display: flex; flex-direction: column;`;
 
       // Polygon Fill Opacity
       let input_fill_opacity_label = document.createElement("label");
       input_fill_opacity_label.setAttribute("for", "fill_opacity");
       input_fill_opacity_label.innerHTML = `Fill Opacity % [${(0.05 * 100).toFixed()}]`;
-      input_fill_opacity_label.style.fontWeight = "normal";
+      input_fill_opacity_label.style.cssText = `font-weight: normal;`;
 
       let input_fill_opacity = document.createElement("input");
       input_fill_opacity.type = "range";
@@ -298,41 +336,35 @@ var geometries = function () {
       input_fill_opacity.step = "0.01";
       input_fill_opacity.value = "0.05";
       input_fill_opacity.name = "fill_opacity";
-      input_fill_opacity.style.width = "100%";
-
-      // Apply modern styling to the range input
-      input_fill_opacity.style.appearance = "none";
-      input_fill_opacity.style.height = "12px";
-      input_fill_opacity.style.borderRadius = "5px";
-      input_fill_opacity.style.outline = "none";
+      input_fill_opacity.style.cssText = `width: 100%; appearance: none; height: 12px; border-radius: 5px; outline: none;`;
 
       // Thumb styling via CSS pseudo-elements
       const styleElement = document.createElement("style");
       styleElement.textContent = `
-        input[type=range]::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 15px; /* Thumb width */
-          height: 15px; /* Thumb height */
-          background: #808080; /* Thumb color */
-          cursor: pointer; /* Switch cursor to pointer when hovering the thumb */
-          border-radius: 50%;
-        }
-          input[type=range]::-moz-range-thumb {
-          width: 15px;
-          height: 15px;
-          background: #808080;
-          cursor: pointer;
-          border-radius: 50%;
-        }
-          input[type=range]::-ms-thumb {
-          width: 15px;
-          height: 15px;
-          background: #808080;
-          cursor: pointer;
-          border-radius: 50%;
-        }
-      `;
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 15px; /* Thumb width */
+    height: 15px; /* Thumb height */
+    background: #808080; /* Thumb color */
+    cursor: pointer; /* Switch cursor to pointer when hovering the thumb */
+    border-radius: 50%;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 15px;
+    height: 15px;
+    background: #808080;
+    cursor: pointer;
+    border-radius: 50%;
+  }
+  input[type=range]::-ms-thumb {
+    width: 15px;
+    height: 15px;
+    background: #808080;
+    cursor: pointer;
+    border-radius: 50%;
+  }
+`;
 
       document.head.appendChild(styleElement);
 
@@ -342,7 +374,6 @@ var geometries = function () {
         let opacityValue = input_fill_opacity.value;
         let rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}, ${opacityValue})`;
 
-        // Update the background color with opacity
         input_fill_opacity.style.backgroundColor = rgbaColor;
         input_fill_opacity.style.border = `2px solid ${color}`;
       };
@@ -364,27 +395,22 @@ var geometries = function () {
 
       // Section for line stroke settings
       let lineStrokeSection = document.createElement("div");
-      lineStrokeSection.style.display = "flex";
-      lineStrokeSection.style.flexDirection = "column";
-      lineStrokeSection.style.marginTop = "10px";
+      lineStrokeSection.style.cssText = `display: flex; flex-direction: column; margin-top: 10px;`;
 
       // Line stroke section label
       let lineStrokeSectionLabel = document.createElement("span");
       lineStrokeSectionLabel.innerText = "Line Stroke Settings:";
-      lineStrokeSectionLabel.style.fontWeight = "bold";
-      lineStrokeSectionLabel.style.marginBottom = "10px";
+      lineStrokeSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 10px;`;
       lineStrokeSection.appendChild(lineStrokeSectionLabel);
 
       // Line Stroke Size
       let lineStrokeSizeRow = document.createElement("div");
-      lineStrokeSizeRow.style.display = "flex";
-      lineStrokeSizeRow.style.alignItems = "center";
+      lineStrokeSizeRow.style.cssText = `display: flex; align-items: center;`;
 
       let line_stroke_size_label = document.createElement("label");
       line_stroke_size_label.setAttribute("for", "line_size");
       line_stroke_size_label.innerHTML = "Size:";
-      line_stroke_size_label.style.fontWeight = "normal";
-      line_stroke_size_label.style.marginRight = "5px";
+      line_stroke_size_label.style.cssText = `font-weight: normal; margin-right: 5px;`;
 
       let line_stroke_size = document.createElement("input");
       line_stroke_size.type = "number";
@@ -394,25 +420,19 @@ var geometries = function () {
       line_stroke_size.name = "line_size";
       line_stroke_size.value = "1";
       line_stroke_size.step = ".5";
-      line_stroke_size.style.width = "50px";
+      line_stroke_size.style.cssText = `width: 50px;`;
 
       lineStrokeSizeRow.appendChild(line_stroke_size_label);
       lineStrokeSizeRow.appendChild(line_stroke_size);
-
-      // Append the line stroke size row to the section container
       lineStrokeSection.appendChild(lineStrokeSizeRow);
 
       // Line Stroke Style
       let lineStrokeStyleRow = document.createElement("div");
-      lineStrokeStyleRow.style.display = "flex";
-      lineStrokeStyleRow.style.alignItems = "center";
-      lineStrokeStyleRow.style.gap = "10px";
-      lineStrokeStyleRow.style.marginTop = "5px";
-      lineStrokeStyleRow.style.marginBottom = "5px";
+      lineStrokeStyleRow.style.cssText = `display: flex; align-items: center; gap: 10px; margin-top: 5px; margin-bottom: 5px;`;
 
       let line_stroke_types_label = document.createElement("span");
       line_stroke_types_label.innerText = "Style:";
-      line_stroke_types_label.style.fontWeight = "normal";
+      line_stroke_types_label.style.cssText = `font-weight: normal;`;
       lineStrokeStyleRow.appendChild(line_stroke_types_label);
 
       let line_stroke_types = [
@@ -420,31 +440,25 @@ var geometries = function () {
         { id: "dash", value: "Dash" },
         { id: "dot", value: "Dot" },
       ];
-      for (let i = 0; i < line_stroke_types.length; i++) {
+      for (const type of line_stroke_types) {
         let radioContainer = document.createElement("div");
-        radioContainer.style.display = "flex";
-        radioContainer.style.alignItems = "center";
-        radioContainer.style.gap = "5px";
+        radioContainer.style.cssText = `display: flex; align-items: center; gap: 5px;`;
 
         let radio = document.createElement("input");
         radio.type = "radio";
-        radio.id = line_stroke_types[i].id;
-        radio.value = line_stroke_types[i].id;
+        radio.id = type.id;
+        radio.value = type.id;
         radio.name = "line_stroke_style";
-        radio.style.margin = "0";
-        radio.style.verticalAlign = "middle";
+        radio.style.cssText = `margin: 0; vertical-align: middle;`;
 
-        if (i === 0) {
-          // If this is the first radio button, we set it to checked
+        if (type.id === "solid") {
           radio.checked = true;
         }
 
         let label = document.createElement("label");
         label.setAttribute("for", radio.id);
-        label.innerHTML = line_stroke_types[i].value;
-        label.style.fontWeight = "normal";
-        label.style.margin = "0"; // Remove default margin
-        label.style.lineHeight = "1"; // Ensure the line height matches
+        label.innerHTML = type.value;
+        label.style.cssText = `font-weight: normal; margin: 0; line-height: 1;`;
 
         radioContainer.appendChild(radio);
         radioContainer.appendChild(label);
@@ -452,21 +466,17 @@ var geometries = function () {
         lineStrokeStyleRow.appendChild(radioContainer);
       }
 
-      // Append the line stroke style row to the section container
       lineStrokeSection.appendChild(lineStrokeStyleRow);
-
-      // Append the line stroke section to the input container
       inputContainer.appendChild(lineStrokeSection);
 
       // Line Stroke Opacity
       let lineStrokeOpacityRow = document.createElement("div");
-      lineStrokeOpacityRow.style.display = "flex";
-      lineStrokeOpacityRow.style.flexDirection = "column";
+      lineStrokeOpacityRow.style.cssText = `display: flex; flex-direction: column;`;
 
       let line_stroke_opacity_label = document.createElement("label");
       line_stroke_opacity_label.setAttribute("for", "line_stroke_opacity");
       line_stroke_opacity_label.innerHTML = "Opacity % [100]";
-      line_stroke_opacity_label.style.fontWeight = "normal";
+      line_stroke_opacity_label.style.cssText = `font-weight: normal;`;
 
       let line_stroke_opacity = document.createElement("input");
       line_stroke_opacity.type = "range";
@@ -476,16 +486,9 @@ var geometries = function () {
       line_stroke_opacity.step = ".05";
       line_stroke_opacity.value = "1";
       line_stroke_opacity.name = "line_stroke_opacity";
-      line_stroke_opacity.style.width = "100%";
+      line_stroke_opacity.style.cssText = `width: 100%; appearance: none; height: 12px; border-radius: 5px; outline: none;`;
 
-      // Apply modern styling to the range input
-      line_stroke_opacity.style.appearance = "none";
-      line_stroke_opacity.style.height = "12px";
-      line_stroke_opacity.style.borderRadius = "5px";
-      line_stroke_opacity.style.outline = "none";
-
-      // Initialize with input color's current value
-      let updateLineOpacityInputStyles = () => {
+      const updateLineOpacityInputStyles = () => {
         let color = input_color.value;
         let opacityValue = line_stroke_opacity.value;
         let rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}, ${opacityValue})`;
@@ -495,15 +498,14 @@ var geometries = function () {
 
       updateLineOpacityInputStyles();
 
-      // Event listener to update the label dynamically
       line_stroke_opacity.addEventListener("input", function () {
         line_stroke_opacity_label.innerHTML = `Opacity % [${Math.round(this.value * 100)}]`;
         updateLineOpacityInputStyles();
       });
-      // Add an event listener to update styles when color input changes
+
       input_color.addEventListener("input", () => {
-        updateOpacityInputStyles();
         updateLineOpacityInputStyles();
+        updateOpacityInputStyles();
       });
 
       lineStrokeOpacityRow.appendChild(line_stroke_opacity_label);
@@ -514,38 +516,30 @@ var geometries = function () {
 
       // Adding a horizontal break before Label Position
       let hrElement2 = document.createElement("hr");
-      hrElement2.style.margin = "5px 0"; // Adjust margin to reduce vertical space
-      hrElement2.style.border = "0"; // Remove default border
-      hrElement2.style.borderTop = "1px solid #ddd"; // Add custom border
+      hrElement2.style.cssText = `margin: 5px 0; border: 0; border-top: 1px solid #ddd;`;
       inputContainer.appendChild(hrElement2);
 
       // Section for label position
       let labelPositionSection = document.createElement("div");
-      labelPositionSection.style.display = "flex";
-      labelPositionSection.style.flexDirection = "column";
+      labelPositionSection.style.cssText = `display: flex; flex-direction: column;`;
 
       // Label position section label
       let labelPositionSectionLabel = document.createElement("span");
       labelPositionSectionLabel.innerText = "Label Position Settings:";
-      labelPositionSectionLabel.style.fontWeight = "bold";
-      labelPositionSectionLabel.style.marginBottom = "5px";
+      labelPositionSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 5px;`;
       labelPositionSection.appendChild(labelPositionSectionLabel);
 
       // Container for horizontal and vertical positioning options
       let labelPositionContainer = document.createElement("div");
-      labelPositionContainer.style.display = "flex";
-      labelPositionContainer.style.marginLeft = "10px";
-      labelPositionContainer.style.gap = "80px";
+      labelPositionContainer.style.cssText = `display: flex; margin-left: 10px; gap: 80px;`;
 
       // Column for horizontal alignment
       let horizontalColumn = document.createElement("div");
-      horizontalColumn.style.display = "flex";
-      horizontalColumn.style.flexDirection = "column";
-      horizontalColumn.style.gap = "5px";
+      horizontalColumn.style.cssText = `display: flex; flex-direction: column; gap: 5px;`;
 
       let horizontalLabel = document.createElement("span");
       horizontalLabel.innerText = "Horizontal:";
-      horizontalLabel.style.fontWeight = "normal";
+      horizontalLabel.style.cssText = `font-weight: normal;`;
       horizontalColumn.appendChild(horizontalLabel);
 
       let label_pos_horizontal = [
@@ -553,29 +547,23 @@ var geometries = function () {
         { id: "c", value: "Center" },
         { id: "r", value: "Right" },
       ];
-      for (let i = 0; i < label_pos_horizontal.length; i++) {
+      for (const pos of label_pos_horizontal) {
         let radioHorizontalRow = document.createElement("div");
-        radioHorizontalRow.style.display = "flex";
-        radioHorizontalRow.style.alignItems = "center";
-        radioHorizontalRow.style.gap = "5px"; // Smaller space between radio and label
+        radioHorizontalRow.style.cssText = `display: flex; align-items: center; gap: 5px;`;
 
         let radio = document.createElement("input");
         radio.type = "radio";
-        radio.id = label_pos_horizontal[i].id;
-        radio.value = label_pos_horizontal[i].id;
+        radio.id = pos.id;
+        radio.value = pos.id;
         radio.name = "label_pos_horizontal";
-        radio.style.margin = "0"; // Remove default margin
-        radio.style.verticalAlign = "middle"; // Center align radios with text
+        radio.style.cssText = `margin: 0; vertical-align: middle;`;
 
         let label = document.createElement("label");
         label.setAttribute("for", radio.id);
-        label.innerHTML = label_pos_horizontal[i].value;
-        label.style.fontWeight = "normal";
-        label.style.margin = "0"; // Remove default margin
-        label.style.lineHeight = "1"; // Ensure the line height matches
+        label.innerHTML = pos.value;
+        label.style.cssText = `font-weight: normal; margin: 0; line-height: 1;`;
 
         if (radio.id === "c") {
-          // If this is the first radio button, we set it to checked
           radio.checked = true;
         }
 
@@ -586,13 +574,11 @@ var geometries = function () {
 
       // Column for vertical alignment
       let verticalColumn = document.createElement("div");
-      verticalColumn.style.display = "flex";
-      verticalColumn.style.flexDirection = "column";
-      verticalColumn.style.gap = "5px";
+      verticalColumn.style.cssText = `display: flex; flex-direction: column; gap: 5px;`;
 
       let verticalLabel = document.createElement("span");
       verticalLabel.innerText = "Vertical:";
-      verticalLabel.style.fontWeight = "normal";
+      verticalLabel.style.cssText = `font-weight: normal;`;
       verticalColumn.appendChild(verticalLabel);
 
       let label_pos_vertical = [
@@ -600,29 +586,23 @@ var geometries = function () {
         { id: "m", value: "Middle" },
         { id: "b", value: "Bottom" },
       ];
-      for (let i = 0; i < label_pos_vertical.length; i++) {
+      for (const pos of label_pos_vertical) {
         let radioVerticalRow = document.createElement("div");
-        radioVerticalRow.style.display = "flex";
-        radioVerticalRow.style.alignItems = "center";
-        radioVerticalRow.style.gap = "5px";
+        radioVerticalRow.style.cssText = `display: flex; align-items: center; gap: 5px;`;
 
         let radio = document.createElement("input");
         radio.type = "radio";
-        radio.id = label_pos_vertical[i].id;
-        radio.value = label_pos_vertical[i].id;
+        radio.id = pos.id;
+        radio.value = pos.id;
         radio.name = "label_pos_vertical";
-        radio.style.margin = "0"; // Remove default margin
-        radio.style.verticalAlign = "middle"; // Center align radios with text
+        radio.style.cssText = `margin: 0; vertical-align: middle;`;
 
         let label = document.createElement("label");
         label.setAttribute("for", radio.id);
-        label.innerHTML = label_pos_vertical[i].value;
-        label.style.fontWeight = "normal";
-        label.style.margin = "0"; // Remove default margin
-        label.style.lineHeight = "1"; // Ensure the line height matches
+        label.innerHTML = pos.value;
+        label.style.cssText = `font-weight: normal; margin: 0; line-height: 1;`;
 
         if (radio.id === "m") {
-          // If this is the first radio button, we set it to checked
           radio.checked = true;
         }
 
@@ -634,47 +614,32 @@ var geometries = function () {
       // Append columns to the label position container
       labelPositionContainer.appendChild(horizontalColumn);
       labelPositionContainer.appendChild(verticalColumn);
-
-      // Append the label position container to the label position section
       labelPositionSection.appendChild(labelPositionContainer);
-
-      // Append the label position section to the input container
       inputContainer.appendChild(labelPositionSection);
-
-      // Append the input container to the form
       geoform.appendChild(inputContainer);
 
       // Adding a horizontal break before the WKT input section
       let hrElement3 = document.createElement("hr");
-      hrElement3.style.margin = "10px 0"; // Adjust margin to reduce vertical space
-      hrElement3.style.border = "0"; // Remove default border
-      hrElement3.style.borderTop = "1px solid #ddd"; // Add custom border
+      hrElement3.style.cssText = `margin: 10px 0; border: 0; border-top: 1px solid #ddd;`; // Adjust margin and border
       geoform.appendChild(hrElement3);
 
       // New label for the Text Area for WKT input section
       let wktSectionLabel = document.createElement("div");
       wktSectionLabel.innerHTML = 'WKT Input: (<a href="https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry" target="_blank">WKT Format</a> )';
-      wktSectionLabel.style.fontWeight = "bold";
-      wktSectionLabel.style.marginBottom = "5px";
-      wktSectionLabel.style.display = "block";
+      wktSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 5px; display: block;`;
       geoform.appendChild(wktSectionLabel);
+
       // Text Area for WKT input
       let wktContainer = document.createElement("div");
-      wktContainer.style.display = "flex";
-      wktContainer.style.flexDirection = "column";
-      wktContainer.style.gap = "5px";
+      wktContainer.style.cssText = `display: flex; flex-direction: column; gap: 5px;`;
+
       // Input for WKT Name
       let input_WKT_name = document.createElement("input");
       input_WKT_name.type = "text";
       input_WKT_name.id = "input_WKT_name";
       input_WKT_name.name = "input_WKT_name";
       input_WKT_name.placeholder = "Name of WKT";
-      input_WKT_name.style.padding = "8px";
-      input_WKT_name.style.fontSize = "1rem";
-      input_WKT_name.style.border = "2px solid #ddd";
-      input_WKT_name.style.borderRadius = "5px";
-      input_WKT_name.style.width = "100%";
-      input_WKT_name.style.boxSizing = "border-box";
+      input_WKT_name.style.cssText = `padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; width: 100%; box-sizing: border-box;`;
       wktContainer.appendChild(input_WKT_name);
 
       // Text Area for WKT input
@@ -682,20 +647,13 @@ var geometries = function () {
       input_WKT.id = "input_WKT";
       input_WKT.name = "input_WKT";
       input_WKT.placeholder = "POINT(X Y)  LINESTRING (X Y, X Y,...)  POLYGON(X Y, X Y, X Y,...) etc....";
-      input_WKT.style.width = "100%";
-      input_WKT.style.height = "10rem";
-      input_WKT.style.padding = "8px";
-      input_WKT.style.fontSize = "1rem";
-      input_WKT.style.border = "2px solid #ddd";
-      input_WKT.style.borderRadius = "5px";
-      input_WKT.style.boxSizing = "border-box";
-      input_WKT.style.resize = "vertical"; // Limit resizing to vertical only
+      input_WKT.style.cssText = `width: 100%; height: 10rem; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical;`;
+      // Restrict resizing to vertical
       wktContainer.appendChild(input_WKT);
 
       // Container for the buttons
       let buttonContainer = document.createElement("div");
-      buttonContainer.style.display = "flex";
-      buttonContainer.style.gap = "45px";
+      buttonContainer.style.cssText = `display: flex; gap: 45px;`;
 
       let submit_WKT_btn = createButton("Import WKT", "#8BC34A", "#689F38", "input");
       submit_WKT_btn.id = "submit_WKT_btn";
@@ -714,51 +672,27 @@ var geometries = function () {
 
       // Add Toggle Button for Debug
       let debugToggleContainer = document.createElement("div");
-      debugToggleContainer.style.display = "flex";
-      debugToggleContainer.style.alignItems = "center";
-      debugToggleContainer.style.marginTop = "15px";
+      debugToggleContainer.style.cssText = `display: flex; align-items: center; margin-top: 15px;`;
 
       let debugToggleLabel = document.createElement("label");
-      debugToggleLabel.style.marginRight = "10px";
+      debugToggleLabel.style.cssText = `margin-left: 10px;`;
 
       const updateLabel = () => {
         debugToggleLabel.innerText = `Debug mode ${debug ? "ON" : "OFF"}`;
       };
 
       let debugSwitchWrapper = document.createElement("label");
-      debugSwitchWrapper.style.position = "relative";
-      debugSwitchWrapper.style.display = "inline-block";
-      debugSwitchWrapper.style.width = "40px";
-      debugSwitchWrapper.style.height = "20px";
-      debugSwitchWrapper.style.border = "1px solid #ccc";
-      debugSwitchWrapper.style.borderRadius = "20px";
+      debugSwitchWrapper.style.cssText = `position: relative; display: inline-block; width: 40px; height: 20px; border: 1px solid #ccc; border-radius: 20px;`;
 
       let debugToggleSwitch = document.createElement("input");
       debugToggleSwitch.type = "checkbox";
-      debugToggleSwitch.style.opacity = "0";
-      debugToggleSwitch.style.width = "0";
-      debugToggleSwitch.style.height = "0";
+      debugToggleSwitch.style.cssText = `opacity: 0; width: 0; height: 0;`;
 
       let switchSlider = document.createElement("span");
-      switchSlider.style.position = "absolute";
-      switchSlider.style.cursor = "pointer";
-      switchSlider.style.top = "0";
-      switchSlider.style.left = "0";
-      switchSlider.style.right = "0";
-      switchSlider.style.bottom = "0";
-      switchSlider.style.backgroundColor = "#ccc";
-      switchSlider.style.transition = ".4s";
-      switchSlider.style.borderRadius = "20px";
+      switchSlider.style.cssText = `position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px;`;
 
       let innerSpan = document.createElement("span");
-      innerSpan.style.position = "absolute";
-      innerSpan.style.height = "14px";
-      innerSpan.style.width = "14px";
-      innerSpan.style.left = "3px";
-      innerSpan.style.bottom = "3px";
-      innerSpan.style.backgroundColor = "white";
-      innerSpan.style.transition = ".4s";
-      innerSpan.style.borderRadius = "50%";
+      innerSpan.style.cssText = `position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;`;
 
       switchSlider.appendChild(innerSpan);
 
@@ -780,17 +714,330 @@ var geometries = function () {
 
       debugSwitchWrapper.appendChild(debugToggleSwitch);
       debugSwitchWrapper.appendChild(switchSlider);
-      debugToggleContainer.appendChild(debugToggleLabel);
       debugToggleContainer.appendChild(debugSwitchWrapper);
+      debugToggleContainer.appendChild(debugToggleLabel);
       geoform.appendChild(debugToggleContainer);
 
+      // Add Toggle Button for useWmeSDK
+      let sdkToggleContainer = document.createElement("div");
+      sdkToggleContainer.style.cssText = `display: flex; align-items: center; margin-top: 10px;`;
+
+      let sdkToggleLabel = document.createElement("label");
+      sdkToggleLabel.style.cssText = `margin-left: 10px;`;
+
+      const updateSdkLabel = () => {
+        sdkToggleLabel.innerText = `wmeSDK ${useWmeSDK ? "ON" : "OFF"}`;
+      };
+
+      let sdkSwitchWrapper = document.createElement("label");
+      sdkSwitchWrapper.style.cssText = `position: relative; display: inline-block; width: 40px; height: 20px; border: 1px solid #ccc; border-radius: 20px;`;
+
+      let sdkToggleSwitch = document.createElement("input");
+      sdkToggleSwitch.type = "checkbox";
+      sdkToggleSwitch.style.cssText = `opacity: 0; width: 0; height: 0; `;
+
+      let sdkSwitchSlider = document.createElement("span");
+      sdkSwitchSlider.style.cssText = `position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px;`;
+
+      let sdkInnerSpan = document.createElement("span");
+      sdkInnerSpan.style.cssText = `position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;`;
+
+      sdkSwitchSlider.appendChild(sdkInnerSpan);
+
+      const updateSdkSwitchState = () => {
+        sdkSwitchSlider.style.backgroundColor = useWmeSDK ? "#8BC34A" : "#ccc";
+        sdkInnerSpan.style.transform = useWmeSDK ? "translateX(20px)" : "translateX(0)";
+      };
+
+      sdkToggleSwitch.checked = useWmeSDK;
+      updateSdkLabel();
+      updateSdkSwitchState();
+
+      sdkToggleSwitch.addEventListener("change", () => {
+        useWmeSDK = sdkToggleSwitch.checked;
+        updateSdkLabel();
+        updateSdkSwitchState();
+        console.log(`${scriptName}: wmeSDK is now ${useWmeSDK ? "enabled" : "disabled"}`);
+      });
+
+      sdkSwitchWrapper.appendChild(sdkToggleSwitch);
+      sdkSwitchWrapper.appendChild(sdkSwitchSlider);
+      sdkToggleContainer.appendChild(sdkSwitchWrapper);
+      sdkToggleContainer.appendChild(sdkToggleLabel);
+      geoform.appendChild(sdkToggleContainer);
+
+      // Add Toggle Button for forceGeoJSON
+      let geoJSONToggleContainer = document.createElement("div");
+      geoJSONToggleContainer.style.cssText = `display: flex; align-items: center; margin-top: 10px;`;
+
+      let geoJSONToggleLabel = document.createElement("label");
+      geoJSONToggleLabel.style.cssText = `margin-left: 10px;`;
+
+      const updateGeoJSONLabel = () => {
+        geoJSONToggleLabel.innerText = `Force GeoJSON Conversion ${forceGeoJSON ? "ON" : "OFF"}`;
+      };
+
+      let geoJSONSwitchWrapper = document.createElement("label");
+      geoJSONSwitchWrapper.style.cssText = `position: relative; display: inline-block; width: 40px; height: 20px; border: 1px solid #ccc; border-radius: 20px;`;
+
+      let geoJSONToggleSwitch = document.createElement("input");
+      geoJSONToggleSwitch.type = "checkbox";
+      geoJSONToggleSwitch.style.cssText = `opacity: 0; width: 0; height: 0;`;
+
+      let geoJSONSwitchSlider = document.createElement("span");
+      geoJSONSwitchSlider.style.cssText = `position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px;`;
+
+      let geoJSONInnerSpan = document.createElement("span");
+      geoJSONInnerSpan.style.cssText = `position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;`;
+
+      geoJSONSwitchSlider.appendChild(geoJSONInnerSpan);
+
+      const updateGeoJSONSwitchState = () => {
+        geoJSONSwitchSlider.style.backgroundColor = forceGeoJSON ? "#8BC34A" : "#ccc";
+        geoJSONInnerSpan.style.transform = forceGeoJSON ? "translateX(20px)" : "translateX(0)";
+      };
+
+      geoJSONToggleSwitch.checked = forceGeoJSON;
+      updateGeoJSONLabel();
+      updateGeoJSONSwitchState();
+
+      geoJSONToggleSwitch.addEventListener("change", () => {
+        forceGeoJSON = geoJSONToggleSwitch.checked;
+        updateGeoJSONLabel();
+        updateGeoJSONSwitchState();
+        console.log(`${scriptName}: Force GeoJSON Conversion is now ${forceGeoJSON ? "enabled" : "disabled"}`);
+        // Trigger map update or reparse data as needed
+      });
+
+      geoJSONSwitchWrapper.appendChild(geoJSONToggleSwitch);
+      geoJSONSwitchWrapper.appendChild(geoJSONSwitchSlider);
+      geoJSONToggleContainer.appendChild(geoJSONSwitchWrapper);
+      geoJSONToggleContainer.appendChild(geoJSONToggleLabel);
+      geoform.appendChild(geoJSONToggleContainer);
+
       console.log(`${scriptName}: User Interface Loaded!`);
-      // Log the OpenLayers version
-      if (OpenLayers.VERSION_NUMBER) {
-        if (debug) console.log(`${scriptName}: OpenLayers Version: ${OpenLayers.VERSION_NUMBER}`);
-      }
-      loadLayers();
     });
+
+    setupProjectionsAndTransforms();
+    loadLayers();
+  }
+
+  function setupProjectionsAndTransforms() {
+    /********************  Register missing transformations in OpenLayers using proj4!  *************************/
+    /********** Proj4-src.js version 2.15.0 predefines the following ******************************************
+     * The `globals` function initializes commonly used coordinate reference system (CRS) definitions
+     * using Proj4. These definitions include several standard EPSG codes, which are referenced globally.
+     *
+     * Here's a summary of the EPSG codes and their corresponding Proj4 definitions:
+     *
+     * - EPSG:4326
+     *   Title: WGS 84 (long/lat)
+     *   Definition: Global latitude/longitude coordinate system, using the WGS84 datum.
+     *   Proj4: +title=WGS 84 (long/lat) +proj=longlat +ellps=WGS84 +datum=WGS84 +units=degrees
+     *
+     * - EPSG:4269
+     *   Title: NAD83 (long/lat)
+     *   Definition: Similar to WGS84 but based on the North American Datum 1983.
+     *   Proj4: +title=NAD83 (long/lat) +proj=longlat +a=6378137.0 +b=6356752.31414036 +ellps=GRS80 +datum=NAD83 +units=degrees
+     *
+     * - EPSG:3857
+     *   Title: WGS 84 / Pseudo-Mercator
+     *   Definition: A projected coordinate system used by many web maps; sometimes called "Web Mercator."
+     *   Proj4: +title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs
+     *
+     * - UTM Zones (Worldwide):
+     *   These add Universal Transverse Mercator (UTM) zones for both the northern and southern hemispheres
+     *   using the WGS84 datum.
+     *   - EPSG:326xx for northern hemisphere zones 1-60 (e.g., EPSG:32601 for zone 1).
+     *   - EPSG:327xx for southern hemisphere zones 1-60 (e.g., EPSG:32701 for zone 1).
+     *   Definitions use the Proj4 format "+proj=utm +zone=<zone_number> +datum=WGS84 +units=m"
+     *
+     * - Additional Definitions:
+     *   - EPSG:3785 is maintained for backward compatibility; its official code is EPSG:3857.
+     *   - GOOGLE, EPSG:900913, EPSG:102113 all reference EPSG:3857 to support different aliases and ensure compatibility with older systems.
+     *
+     * The function also sets global shortcuts for these systems, such as WGS84 referencing EPSG:4326.
+     */
+
+    // Ensure Proj4js is loaded along with OpenLayers
+    if (typeof OpenLayers !== "undefined" && typeof proj4 !== "undefined") {
+      OpenLayers.Projection.prototype.proj4js = proj4;
+      console.log(`${scriptName}: OpenLayers and Proj4js are properly integrated.`);
+    } else {
+      console.error(`${scriptName}: Required libraries OpenLayers and/or Proj4js are not loaded.`);
+      return;
+    }
+
+    // Define projection mappings with additional properties needed to create OpenLayers projections (units: , maxExtent: yx:)
+    //definition: should be in proj4js format
+    const projDefs = {
+      "EPSG:4326": { definition: "+title=WGS 84 (long/lat) +proj=longlat +ellps=WGS84 +datum=WGS84 +units=degrees", maxExtent: [-180, -90, 180, 90], units: "degrees", yx: true },
+      "EPSG:3857": { definition: "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs", maxExtent: [-20037508.34, -20037508.34, 20037508.34, 20037508.34], units: "m" },
+      "EPSG:900913": { definition: "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs", maxExtent: [-20037508.34, -20037508.34, 20037508.34, 20037508.34], units: "m" },
+      "EPSG:102100": { definition: "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs", maxExtent: [-20037508.34, -20037508.34, 20037508.34, 20037508.34], units: "m" },
+      "EPSG:4269": { definition: "+title=NAD83 (long/lat) +proj=longlat +a=6378137.0 +b=6356752.31414036 +ellps=GRS80 +datum=NAD83 +units=degrees", maxExtent: [-179.999, -4.999, 179.999, 49.999], units: "degrees" },
+      "EPSG:4267": { definition: "+title=NAD27 +proj=longlat +ellps=clrk66 +datum=NAD27 +no_defs", maxExtent: [-179.999, -4.999, 179.999, 49.999], units: "degrees" },
+      "EPSG:3035": { definition: "+title=ETRS89-extended / LAEA Europe +proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-4281778.7, 4351889.4, 1100517.0, 8509999.2], units: "m" },
+      "EPSG:4258": { definition: "+title=ETRS89 (European Terrestrial Reference System 1989 +proj=longlat +ellps=GRS80 +no_defs +type=crs", maxExtent: [-16.1, 33.26, 38.01, 84.73], units: "degrees" },
+      "EPSG:25832": { definition: "+title=ETRS89 / UTM zone 32N +proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-1866822.47, 3680224.65, 3246120.36, 9483069.2], units: "m" },
+      "EPSG:27700": { definition: "+title=OSGB36 / British National Grid +proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.060 +units=m +no_defs", maxExtent: [-68652.35, -16703.89, 652865.25, 3659.81], units: "m" },
+      "EPSG:4283": { definition: "+title=GDA94 / Geocentric Datum of Australia 1994 +proj=longlat +ellps=GRS80 +no_defs +type=crs", maxExtent: [93.41, -60.55, 173.34, -8.47], units: "degrees" },
+      "EPSG:4214": { definition: "+title=Beijing 1954 +proj=longlat +ellps=krass +towgs84=15.8,-154.4,-82.3,0,0,0,0 +no_defs +type=crs", maxExtent: [73.62, 16.7, 134.77, 53.56], units: "degrees" },
+      "EPSG:3414": { definition: "+title=SVY21 / Singapore TM +proj=tmerc +lat_0=1.36666666666667 +lon_0=103.833333333333 +k=1 +x_0=28001.642 +y_0=38744.572 +ellps=WGS84 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [919.05, 12575.2, 54342.24, 5012.13], units: "m" },
+      // NAD 83 and by Zone
+      "EPSG:26901": { definition: "+title=NAD83 / UTM zone 1N +proj=utm +zone=1 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-236664.12, 5683214.12, 1346321.23, 6089777.96], units: "m" },
+      "EPSG:26902": { definition: "+title=NAD83 / UTM zone 2N +proj=utm +zone=2 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [343123.02, 2634042.41, 10385020.37, 15684396.61], units: "m" },
+      "EPSG:26903": { definition: "+title=NAD83 / UTM zone 3N +proj=utm +zone=3 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-269529.98, 2634442.81, 10381806.16, 15110676.33], units: "m" },
+      "EPSG:26904": { definition: "+title=NAD83 / UTM zone 4N +proj=utm +zone=4 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-887933.72, 2634920.25, 10377477.4, 14363875.02], units: "m" },
+      "EPSG:26905": { definition: "+title=NAD83 / UTM zone 5N +proj=utm +zone=5 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-1516761.97, 2635474.79, 10372038.07, 13402280.66], units: "m" },
+      "EPSG:26906": { definition: "+title=NAD83 / UTM zone 6N +proj=utm +zone=6 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-2160832.29, 2636054.6, 10365493.19, 12204094.4], units: "m" },
+      "EPSG:26907": { definition: "+title=NAD83 / UTM zone 7N +proj=utm +zone=7 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-2825105.32, 2635428.89, 10357848.76, 10804497.54], units: "m" },
+      "EPSG:26908": { definition: "+title=NAD83 / UTM zone 8N +proj=utm +zone=8 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-3514571.4, 2634880.35, 10349111.76, 9979047.26], units: "m" },
+      "EPSG:26909": { definition: "+title=NAD83 / UTM zone 9N +proj=utm +zone=9 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-4233900.32, 2634408.91, 10009187.77, 9937834.11], units: "m" },
+      "EPSG:26910": { definition: "+title=NAD83 / UTM zone 10N +proj=utm +zone=10 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-4986601.04, 2634014.5, 9400376.54, 9897284.61], units: "m" },
+      "EPSG:26911": { definition: "+title=NAD83 / UTM zone 11N +proj=utm +zone=11 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-5773188.31, 2633697.07, 8640663.91, 9857845.83], units: "m" },
+      "EPSG:26912": { definition: "+title=NAD83 / UTM zone 12N +proj=utm +zone=12 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-6587424.26, 2633456.58, 7823629.61, 9819951.93], units: "m" },
+      "EPSG:26913": { definition: "+title=NAD83 / UTM zone 13N +proj=utm +zone=13 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-7409211.34, 2633293.0, 7004315.28, 9846806.33], units: "m" },
+      "EPSG:26914": { definition: "+title=NAD83 / UTM zone 14N +proj=utm +zone=14 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-8193186.78, 2633206.3, 6208726.29, 9885845.94], units: "m" },
+      "EPSG:26915": { definition: "+title=NAD83 / UTM zone 15N +proj=utm +zone=15 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-8856933.09, 2633196.48, 5446161.06, 9926122.27], units: "m" },
+      "EPSG:26916": { definition: "+title=NAD83 / UTM zone 16N +proj=utm +zone=16 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-9285588.45, 2633263.53, 4717539.4, 9967191.44], units: "m" },
+      "EPSG:26917": { definition: "+title=NAD83 / UTM zone 17N +proj=utm +zone=17 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-9375787.46, 2633407.46, 4019960.94, 10380625.27], units: "m" },
+      "EPSG:26918": { definition: "+title=NAD83 / UTM zone 18N +proj=utm +zone=18 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-9369979.01, 2633628.29, 3348971.56, 11819889.87], units: "m" },
+      "EPSG:26919": { definition: "+title=NAD83 / UTM zone 19N +proj=utm +zone=19 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-9363066.9, 2633926.06, 2699621.82, 13082867.02], units: "m" },
+      "EPSG:26920": { definition: "+title=NAD83 / UTM zone 20N +proj=utm +zone=20 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-9355057.45, 2634300.79, 2066923.68, 14111784.79], units: "m" },
+      "EPSG:26921": { definition: "+title=NAD83 / UTM zone 21N +proj=utm +zone=21 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-9346704.62, 2634752.54, 1446015.08, 14916202.24], units: "m" },
+      "EPSG:26922": { definition: "+title=NAD83 / UTM zone 22N +proj=utm +zone=22 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-9355719.6, 2635281.37, 832184.74, 15535142.11], units: "m" },
+      "EPSG:26923": { definition: "+title=NAD83 / UTM zone 23N +proj=utm +zone=23 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs", maxExtent: [-9363643.95, 2635887.35, 481118.3, 16010435.63], units: "m" },
+    };
+
+    // Add WGS 84 UTM Zones - Global UTM zones covering various longitudes for both hemispheres
+    for (let zone = 1; zone <= 60; zone++) {
+      projDefs[`EPSG:${32600 + zone}`] = {
+        definition: `+proj=utm +zone=${zone} +datum=WGS84 +units=m +no_defs`,
+        units: "m",
+        maxExtent: [166021.44, 0, 833978.56, 9329005.18],
+      };
+      projDefs[`EPSG:${32700 + zone}`] = {
+        definition: `+proj=utm +zone=${zone} +south +datum=WGS84 +units=m +no_defs`,
+        units: "m",
+        maxExtent: [166021.44, 1116915.04, 833978.56, 10000000.0],
+      };
+    }
+
+    // Register the projections manually
+    for (const [epsg, { definition, units, maxExtent, yx }] of Object.entries(projDefs)) {
+      proj4.defs(epsg, definition); // Register each one with proj4
+      OpenLayers.Projection.defaults[epsg] = { units, maxExtent, yx }; // Add each one to the list of defult avalaible projections in open layers
+    }
+
+    // Function to add only the necessary transformation from UTM to supported formats
+    function addProjTransform(fromEPSG, toEPSG) {
+      OpenLayers.Projection.addTransform(fromEPSG, toEPSG, function (point) {
+        const transformedPoint = proj4(fromEPSG, toEPSG, [point.x, point.y]);
+        point.x = transformedPoint[0];
+        point.y = transformedPoint[1];
+        return point;
+      });
+    }
+
+    // Base internal projections EPSGs for WME to transform to
+    const baseEPSGs = ["EPSG:900913", "EPSG:3857"];
+
+    // Dynamically prepare a list from all defined projection keys
+    const allEPSGs = Object.keys(projDefs);
+
+    // Register transformations for all defined EPSGs in open layers
+    for (const srcEPSG of allEPSGs) {
+      for (const tgtEPSG of baseEPSGs) {
+        addProjTransform(srcEPSG, tgtEPSG);
+      }
+    }
+
+    // Optional debugging information
+    if (debug) {
+      console.log(`${scriptName}: OpenLayers.Projection.defaults:`, OpenLayers.Projection.defaults);
+
+      const definedProjections = {};
+      Object.keys(proj4.defs).forEach((code) => {
+        try {
+          const definition = proj4.defs(code);
+          definedProjections[code] = definition;
+        } catch (error) {
+          console.warn(`${scriptName}: Could not retrieve definition for ${code}: ${error.message}`);
+        }
+      });
+
+      if (debug) console.log(`${scriptName}: OpenLayers.Projection.transforms:`, OpenLayers.Projection.transforms);
+      if (debug) testTransformations();
+    }
+
+    // Create a mapping of common EPSG codes and common aliases to their OpenLayers Projection objects
+    projectionMap = {
+      // WGS84 common aliases, same as ESPG:4326
+      CRS84: new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS84": new OpenLayers.Projection("EPSG:4326"),
+      WGS84: new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "WGS 84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:WGS_84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS_WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS:WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS:WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS::WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS::WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS:84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS:84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS::84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS::84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS 84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS_84": new OpenLayers.Projection("EPSG:4326"),
+      // ESPG:4269 NAD 83 common aliases
+      "NAD 83": new OpenLayers.Projection("EPSG:4269"),
+      "urn:ogc:def:crs:OGC:1.3:NAD_83": new OpenLayers.Projection("EPSG:4269"),
+      NAD83: new OpenLayers.Projection("EPSG:4269"),
+      "urn:ogc:def:crs:OGC:1.3:NAD83": new OpenLayers.Projection("EPSG:4269"),
+      //ESPG:3035  ETRS89 / LAEA Europe and it's common aliases
+      "ETRS 89": new OpenLayers.Projection("EPSG:3035"),
+      "urn:ogc:def:crs:OGC:1.3:ETRS_89": new OpenLayers.Projection("EPSG:3035"),
+      ETRS89: new OpenLayers.Projection("EPSG:3035"),
+      "urn:ogc:def:crs:OGC:1.3:ETRS89": new OpenLayers.Projection("EPSG:3035"),
+      //ESPG:4267  ETRS89 / LAEA Europe common aliases
+      "NAD 27": new OpenLayers.Projection("EPSG:4267"),
+      "urn:ogc:def:crs:OGC:1.3:NAD_27": new OpenLayers.Projection("EPSG:4267"),
+      NAD27: new OpenLayers.Projection("EPSG:4267"),
+      "urn:ogc:def:crs:OGC:1.3:NAD27": new OpenLayers.Projection("EPSG:4267"),
+    };
+
+    const identifierTemplates = [
+      "EPSG:{{code}}",
+      "urn:ogc:def:crs:EPSG:{{code}}",
+      "urn:ogc:def:crs:OGC:1.3:EPSG:{{code}}",
+      "EPSG::{{code}}",
+      "urn:ogc:def:crs:EPSG::{{code}}",
+      "urn:ogc:def:crs:OGC:1.3:EPSG::{{code}}",
+      "CRS:{{code}}",
+      "urn:ogc:def:crs:OGC:1.3:CRS:{{code}}",
+      "CRS::{{code}}",
+      "urn:ogc:def:crs:OGC:1.3:CRS::{{code}}",
+      "CRS {{code}}",
+      "urn:ogc:def:crs:OGC:1.3:CRS_{{code}}",
+      "CRS{{code}}",
+      "urn:ogc:def:crs:OGC:1.3:CRS{{code}}",
+    ];
+
+    // Extract EPSG codes from the projDefs object
+    const epsgCodes = Object.keys(projDefs).map((key) => key.split(":")[1]);
+
+    // Use a loop to populate the projectionMap object
+    epsgCodes.forEach((code) => {
+      identifierTemplates.forEach((template) => {
+        const identifier = template.replace("{{code}}", code);
+        projectionMap[identifier] = new OpenLayers.Projection(`EPSG:${code}`);
+      });
+    });
+
+    if (debug) console.log(`${scriptName}: projectionMap:`, projectionMap);
   }
 
   /****************************************************************************
@@ -817,10 +1064,7 @@ var geometries = function () {
    * - Utilizes global variables and functions such as `formats`, `storedLayers`, and `parseFile`.
    * - Relies on DOM elements and user inputs that need to be correctly set up in the environment for this function to work.
    *****************************************************************************/
-
   function draw_WKT() {
-    if (debug) console.log(`${scriptName}: draw_WKT(): Import WKT called`);
-
     // Retrieve style and layer options
     let color = document.getElementById("color").value;
     let fillOpacity = document.getElementById("fill_opacity").value;
@@ -828,15 +1072,16 @@ var geometries = function () {
     let lineopacity = document.getElementById("line_stroke_opacity").value;
     let linesize = document.getElementById("line_size").value;
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
-    let layerName = document.getElementById("input_WKT_name").value;
+    let layerName = document.getElementById("input_WKT_name").value.trim();
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
     // Check for empty layer name
-    if (layerName.trim() === "") {
+    if (!layerName) {
       if (debug) console.error(`${scriptName}: WKT Input layer name cannot be empty.`);
       WazeWrap.Alerts.error(scriptName, "WKT Input layer name cannot be empty.");
       return;
     }
+
     // Check for duplicate layer name
     let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
     for (let i = 0; i < layers.length; i++) {
@@ -846,43 +1091,26 @@ var geometries = function () {
         return;
       }
     }
+
     // Retrieve and validate WKT input
     let wktInput = document.getElementById("input_WKT").value.trim();
-    if (wktInput === "") {
+    if (!wktInput) {
       if (debug) console.error(`${scriptName}: WKT input is empty.`);
       WazeWrap.Alerts.error(scriptName, "WKT input is empty.");
       return;
     }
 
-    let geojsonData;
     try {
-      // Initialize GeoWKTer and parse WKT
-      let wktObj = new GeoWKTer();
-      if (debug) console.info(`${scriptName}: WKT input:`, wktInput);
-
-      // Parse and convert WKT to GeoJSON
-      let parsedData = wktObj.read(wktInput, layerName);
-      if (debug) console.info(`${scriptName}: WKT input successfully read:`, parsedData);
-
-      geojsonData = wktObj.toGeoJSON(parsedData);
-      if (debug) console.log(`${scriptName}: draw_WKT(): WKT input successfully converted to GeoJSON`, geojsonData);
-    } catch (error) {
-      if (debug) console.error(`${scriptName}: Error processing WKT input.`, error);
-      WazeWrap.Alerts.error(scriptName, `Error processing WKT. Please check your input format.\n` + error);
-      return;
-    }
-    // Construct and store the layer object
-    try {
-      let geojson_layer = new layerStoreObj(geojsonData, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "Name", "WKT");
-      storedLayers.push(geojson_layer);
+      // Create an instance of GeoWKTer
+      const geoWKTer = new GeoWKTer();
+      const wktString = geoWKTer.read(wktInput, layerName); // Parse WKT input to an internal representation
+      const geojsonData = geoWKTer.toGeoJSON(wktString); // Convert to GeoJSON using the toGeoJSON method
+      // Store and add the GeoJSON layer
+      const geojson_layer = new layerStoreObj(geojsonData, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "${Name}", "WKT");
       parseFile(geojson_layer);
-
-      // Compressed storage in localStorage
-      localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
-      console.log(`${scriptName}: draw_WKT(): Stored WKT Input - ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
     } catch (error) {
-      if (debug) console.error(`${scriptName}: Error storing or adding WKT layer.`, error);
-      WazeWrap.Alerts.error(scriptName, "Error storing or adding the WKT layer.");
+      console.error(`${scriptName}: Error processing WKT input`, error);
+      WazeWrap.Alerts.error(scriptName, `Error processing WKT input. Please check your input format.\n${error.message}`);
     }
   }
 
@@ -911,7 +1139,6 @@ var geometries = function () {
    * - Debug logging is conditional based on the `debug` flag to assist in development and troubleshooting.
    *****************************************************************************/
   function drawStateBoundary() {
-    if (debug) console.info(`${scriptName}: drawStateBoundary() called`);
     // add formating Options and locaal storage for WME refresh availability to Draw State Boundary functionality
     let color = document.getElementById("color").value;
     let fillOpacity = document.getElementById("fill_opacity").value;
@@ -921,23 +1148,26 @@ var geometries = function () {
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
+    // SDK Work: options for State level geometry?  Not availibe in wmeSDK.DataModel.States.getTopState())
     if (!W.model.topState || !W.model.topState.attributes || !W.model.topState.attributes.geometry) {
-      if (debug) console.info(`${scriptName}: no state or geometry available, sorry!`);
+      if (debug) console.log(`${scriptName}: no state or geometry available, sorry!`);
       WazeWrap.Alerts.info(scriptName, "No State or Geometry Available, Sorry!");
       return;
     }
+    // SDK Work: move to wmeSDK.DataModel.States.getTopState() when geometry can be found
     let layerName = `(${W.model.topState.attributes.name})`.replace(/[^A-Za-z]/g, "");
-    if (debug) console.info(`${scriptName}: State or geometry is:`, layerName);
+    if (debug) console.log(`${scriptName}: State or geometry is:`, layerName);
 
+    // SDK Work: might not be needed if parsefile()-->createLayerWithLabel() handels duplacete layer names when adding new layers!
     let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
     for (let i = 0; i < layers.length; i++) {
       if (layers[i].name == "Geometry: " + layerName) {
-        if (debug) console.info(`${scriptName}: current state already loaded`);
+        if (debug) console.log(`${scriptName}: current state already loaded`);
         WazeWrap.Alerts.info(scriptName, "Current State Boundary already Loaded!");
         return;
       }
     }
-
+    // SDK Work: options for State level geometry?  Not availibe in wmeSDK.DataModel.States.getTopState())
     let state_geo = W.model.topState.attributes.geometry;
     // Convert to GeoJSON
     let state_geojson;
@@ -956,12 +1186,7 @@ var geometries = function () {
     }
 
     let state_obj = new layerStoreObj(state_geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "Name", "GEOJSON");
-    storedLayers.push(state_obj);
-
-    if (debug) console.info(`${scriptName}: State _obj:`, state_obj);
     parseFile(state_obj);
-    localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
-    console.info(`${scriptName}: Stored the State of ${layerName} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
   }
 
   // Clears the current contents of the textarea.
@@ -991,7 +1216,7 @@ var geometries = function () {
    *************************************************************************/
 
   function addGeometryLayer() {
-    if (debug) console.log(`${scriptName}: addGeometryLayer(): called`);
+    toggleParsingMessage(true); // turn off in parseFile()
 
     const fileList = document.getElementById("GeometryFile");
     const file = fileList.files[0];
@@ -1018,70 +1243,219 @@ var geometries = function () {
       requestAnimationFrame(() => {
         try {
           let fileObj;
+
           switch (fileext) {
             case "ZIP":
-              shp(e.target.result)
-                .then((geojson) => {
-                  if (debug) console.log(`${scriptName}: ZIP file processed, resulting GeoJSON`, geojson);
-                  fileObj = new layerStoreObj(geojson, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "SHP");
+              if (debug) console.log(`${scriptName}: .ZIP shapefile file found, format not supported by OpenLayers v 2.13.1, converting to GEOJSON...`);
+              if (debug) console.time(`${scriptName}: .ZIP shapefile conversion in`);
+            
+              const geoSHPer = new GeoSHPer();
+            
+              // Using an IIFE to handle the async operation with try/catch
+              (async () => {
+                try {
+                  toggleParsingMessage(true); // Show the parsing message at the start
+            
+                  // Ensure the operation is awaited
+                  await geoSHPer.read(e.target.result); 
+                  const geoJSON = geoSHPer.toGeoJSON();
+                  const geojsonWithoutZ = removeZCoordinates(geoJSON);
+            
+                  if (debug) console.timeEnd(`${scriptName}: .ZIP shapefile conversion in`);
+            
+                  const fileObj = new layerStoreObj(geojsonWithoutZ, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "SHP");
+            
                   parseFile(fileObj);
-                })
-                .catch(handleError("ZIP shapefile"));
+
+                } catch (error) {
+                  toggleParsingMessage(false);
+                  handleError("ZIP shapefile")(error);
+                }
+              })();
               break;
 
             case "WKT":
-              if (debug) console.log(`${scriptName}: WKT file detected, converting to GeoJSON...`);
               try {
-                const geoWKTer = new GeoWKTer();
-                const wktData = geoWKTer.read(e.target.result, filename);
-                const WKTtoGeoJSON = geoWKTer.toGeoJSON(wktData);
-                fileObj = new layerStoreObj(WKTtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                if (forceGeoJSON) {
+                  // WKT files are assumed to be in projection WGS84  = EPSG:4326
+                  if (debug) console.log(`${scriptName}: .WKT file found, forceGeoJSON is ON, converting to GEOJSON...`);
+                  if (debug) console.time(`${scriptName}: .WKT conversion in`);
+
+                  const geoWKTer = new GeoWKTer();
+                  const wktDoc = geoWKTer.read(e.target.result, filename); // Read entire content as a single WKT input
+                  const geoJSON = geoWKTer.toGeoJSON(wktDoc);
+
+                  if (debug) console.timeEnd(`${scriptName}: .WKT conversion in`);
+
+                  fileObj = new layerStoreObj(geoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                } else {
+                  if (debug) console.log(`${scriptName}: .WKT file found, forceGeoJSON is OFF.... passing to OpenLayers...`);
+                  fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                }
                 parseFile(fileObj);
               } catch (error) {
+                toggleParsingMessage(false);
                 handleError("WKT conversion")(error);
               }
               break;
 
             case "GPX":
+              //The GPX format is inherently based on the WGS 84 coordinate system (EPSG:4326) using latitude and longitude.
               try {
-                const geoGPXer = new GeoGPXer();
-                const gpxDoc = geoGPXer.read(e.target.result);
-                const GPXtoGeoJSON = geoGPXer.toGeoJSON(gpxDoc);
-                fileObj = new layerStoreObj(GPXtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                if (forceGeoJSON) {
+                  if (debug) console.log(`${scriptName}: .GPX file found, forceGeoJSON is ON.... converting to GEOJSON...`);
+                  if (debug) console.time(`${scriptName}: .GPX conversion in`);
+
+                  const geoGPXer = new GeoGPXer();
+                  const gpxDoc = geoGPXer.read(e.target.result);
+                  const GPXtoGeoJSON = geoGPXer.toGeoJSON(gpxDoc);
+
+                  if (debug) console.timeEnd(`${scriptName}: .GPX conversion in`);
+
+                  fileObj = new layerStoreObj(GPXtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                } else {
+                  if (debug) console.log(`${scriptName}: .GPX file found, forceGeoJSON is OFF.... passing to OpenLayers...`);
+                  fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                }
+
                 parseFile(fileObj);
               } catch (error) {
-                handleError("GPX conversion")(error);
+                toggleParsingMessage(false);
+                handleError("KML conversion")(error);
+              }
+              break;
+
+            case "KML":
+              //Represent geographic data and are natively based on the WGS 84 coordinate system (EPSG:4326), using latitude and longitude.
+              try {
+                if (forceGeoJSON) {
+                  if (debug) console.log(`${scriptName}: .KML file found, forceGeoJSON is ON.... converting to GEOJSON...`);
+                  if (debug) console.time(`${scriptName}: .KML conversion in`);
+
+                  const geoKMLer = new GeoKMLer(); // Currently only extrancts X & Y, when updated for Z will need to add removeZCoordinates() on the output for OL 2.13.1 GeoJSON parser.
+                  const kmlDoc = geoKMLer.read(e.target.result);
+                  const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc);
+
+                  if (debug) console.timeEnd(`${scriptName}: .KML conversion in`);
+
+                  fileObj = new layerStoreObj(KMLtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                } else {
+                  if (debug) console.log(`${scriptName}: .KML file found, forceGeoJSON is OFF.... passing to OpenLayers...`);
+                  fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                }
+
+                parseFile(fileObj);
+              } catch (error) {
+                toggleParsingMessage(false);
+                handleError("KML conversion")(error);
+              }
+              break;
+
+            case "KMZ":
+
+              if (debug) console.log(`${scriptName}: .KMZ file found, forceGeoJSON is ON.... converting to GEOJSON...`);
+              if (debug) console.time(`${scriptName}: .KMZ conversion in`);
+              // Initialize the GeoKMZer instance
+              const geoKMZer = new GeoKMZer();
+
+              (async () => {
+                try {
+                  // Read and parse the KMZ file
+                  const kmlContentsArray = await geoKMZer.read(e.target.result);
+
+                  // Iterate over each KML file extracted from the KMZ
+                  kmlContentsArray.forEach(({ filename: kmlFile, content }, index) => {
+                    // Construct unique filenames for each KML file
+                    const uniqueFilename = kmlContentsArray.length > 1 ? `${filename}_${index + 1}` : `${filename}`;
+
+                    if (forceGeoJSON) {
+                      if (debug) console.log(`${scriptName}: Converting extracted .KML to GEOJSON...`);
+
+                      const geoKMLer = new GeoKMLer();
+                      const kmlDoc = geoKMLer.read(content);
+                      const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc);
+
+                      if (debug) console.timeEnd(`${scriptName}: .KMZ conversion in`);
+
+                      // Create a layer store object for GeoJSON format
+                      fileObj = new layerStoreObj(KMLtoGeoJSON, color, "GEOJSON", uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "KMZ");
+                    } else {
+                      // Create a layer store object for KML format
+                      fileObj = new layerStoreObj(content, color, "KML", uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "KMZ");
+                    }
+
+                    parseFile(fileObj);
+                  });
+
+                } catch (error) {
+                  toggleParsingMessage(false);
+                  handleError("KMZ read operation")(error);
+                }
+              })();
+              break;
+
+            case "GML":
+              try {
+                if (forceGeoJSON) {
+                  if (debug) console.log(`${scriptName}: .GML file found, forceGeoJSON is ON.... converting to GEOJSON...`);
+                  if (debug) console.time(`${scriptName}: .GML conversion in`);
+
+                  const geoGMLer = new GeoGMLer(); // WIP, but does the basics well and more GML versions than the OpenLayers 2.13.1 or even OL 4.X parsers
+                  const gmlDoc = geoGMLer.read(e.target.result);
+                  const GMLtoGeoJSON = geoGMLer.toGeoJSON(gmlDoc);
+
+                  if (debug) console.log(`${scriptName}: GML GeoJSON:`, GMLtoGeoJSON);
+                  if (debug) console.timeEnd(`${scriptName}: .GML conversion in`);
+
+                  fileObj = new layerStoreObj(GMLtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                } else {
+                  if (debug) console.log(`${scriptName}: .GML file found, forceGeoJSON is OFF.... passing to OpenLayers...`);
+                  fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                }
+                parseFile(fileObj);
+              } catch (error) {
+                toggleParsingMessage(false);
+                handleError("GML conversion")(error);
               }
               break;
 
             case "GEOJSON":
-            case "KML":
-            case "GML":
-            case "OSM":
               try {
-                fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                if (debug) console.log(`${scriptName}: .GEOJSON file found ... passing to OpenLayers...`);
+
+                const geojsonWithoutZ = removeZCoordinates(e.target.result); // While WME uses OpenLayers 2.13.1, the GeoJSON parser fails if it encounters Z and possibly M values.
+
+                fileObj = new layerStoreObj(geojsonWithoutZ, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+
                 parseFile(fileObj);
               } catch (error) {
-                handleError(`${fileext} parsing`)(error);
+                toggleParsingMessage(false);
+                handleError("GEOJSON parsing")(error);
               }
               break;
 
             default:
+              toggleParsingMessage(false);
               handleError("unsupported file type")(new Error("Unsupported file type"));
               break;
           }
         } catch (error) {
+          toggleParsingMessage(false);
           handleError("file")(error);
         }
       });
     };
 
-    fileext === "ZIP" ? reader.readAsArrayBuffer(file) : reader.readAsText(file);
+    if (fileext === "ZIP" || fileext === "KMZ") {
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.readAsText(file);
+    }
 
     function handleError(context) {
       return (error) => {
-        console.error(`${scriptName}: Error processing ${context}:`, error);
-        WazeWrap.Alerts.error(scriptName, `Error processing ${context} :(`);
+        console.error(`${scriptName}: Error parsing ${context}:`, error);
+        WazeWrap.Alerts.error(scriptName, `${error}`);
       };
     }
   }
@@ -1120,82 +1494,114 @@ var geometries = function () {
    * - Provides detailed debug logs when the debug flag is active, aiding in troubleshooting and validating process steps.
    ***************************************************************************************/
   function parseFile(fileObj) {
-    if (debug) console.log(`${scriptName}: parseFile(): called`, fileObj);
+    if (debug) console.log(`${scriptName}: parseFile(): called with input of:`, fileObj);
     const fileext = fileObj.fileext.toUpperCase();
     const orgFileext = fileObj.orgFileext.toUpperCase();
     const fileContent = fileObj.fileContent;
     const filename = fileObj.filename;
     const parser = formats[fileext];
 
-    let EPSG_4326 = new OpenLayers.Projection("EPSG:4326"); // WGS 84
-    let EPSG_4269 = new OpenLayers.Projection("EPSG:4269"); // NAD 83
-    let EPSG_3857 = new OpenLayers.Projection("EPSG:3857"); // Web Mercator
-    let EPSG_3035 = new OpenLayers.Projection("EPSG:3035"); // ETRS89 / LAEA Europe
-    let EPSG_4267 = new OpenLayers.Projection("EPSG:4267"); // NAD 27
-    let EPSG_28356 = new OpenLayers.Projection("EPSG:28356"); // GDA94 / MGA zone 56
-
+    // Check initialization of parser
     if (!parser) {
-      console.error(`${scriptName}: parseFile(): No parser found for format: ${fileext}`);
+      console.error(`${scriptName}: No parser found for format: ${fileext}`);
       return;
     }
 
-    // Assign internalProjection
-    parser.internalProjection = W.map.getProjectionObject();
+    // Assign internal projection
+    parser.internalProjection = W.map.getProjectionObject(); // currently WME is EPSG:900913
+    let foundProjection = false;
 
-    // Default external projection
-    parser.externalProjection = EPSG_4326;
-
-    // Modify the external projection based on detected EPSG codes
-    if (/"EPSG:3857"/.test(fileContent) || /:EPSG::3857"/.test(fileContent)) {
-      parser.externalProjection = EPSG_3857;
-    } else if (/"EPSG:4269"/.test(fileContent) || /:EPSG::4269"/.test(fileContent)) {
-      parser.externalProjection = EPSG_4269;
-    } else if (/"EPSG:3035"/.test(fileContent) || /:EPSG::3035"/.test(fileContent)) {
-      parser.externalProjection = EPSG_3035;
-    } else if (/"EPSG:4267"/.test(fileContent) || /:EPSG::4267"/.test(fileContent)) {
-      parser.externalProjection = EPSG_4267;
-    } else if (/"EPSG:28356"/.test(fileContent) || /:EPSG::28356"/.test(fileContent)) {
-      parser.externalProjection = EPSG_28356;
+    // Convert fileContent to a string if it's an object
+    let contentToTest;
+    if (typeof fileContent === "object") {
+      contentToTest = JSON.stringify(fileContent); // Stringify the object for searching
+    } else {
+      contentToTest = fileContent; // Use it directly if it's already a string
     }
 
-    if (debug) console.log(`${scriptName}: parseFile(): External projection is: ${parser.externalProjection}`);
+    // Regex pattern to capture various projections
+    const projectionPattern =
+      /("EPSG:\d{1,6}"|"CRS:\d{1,6}"|CRS\d{0,6}|CRS:\s*WGS84|WGS84|\bWGS\s84\b|\bCRS\s84\b|\bNAD\s83\b|NAD83|\bNAD\s27\b|NAD27|\bETRS\s89\b|ETRS89|"EPSG::\d{1,6}"|"urn:ogc:def:crs:EPSG::\d{1,6}"|"urn:ogc:def:crs:EPSG:\d{1,6}\.\d{1,6}:\d{1,6}"|"urn:ogc:def:crs:OGC:1\.3:[^"]*")/;
+
+    // Finds the first match in the input content. While it is possible for some geometry file types to have different projections per feature, this assumes all features share the same projection.
+    const match = contentToTest.match(projectionPattern);
+
+    if (match) {
+      let projection = match[0].replace(/"/g, "");
+
+      // Check if the match exists in the projection map
+      if (projectionMap[projection]) {
+        if (debug) console.log(`${scriptName}: External Projection found in file: ${projection}`);
+        parser.externalProjection = projectionMap[projection]; // Set the external projection
+        foundProjection = true; // Mark as found
+      } else {
+        const supportedProjections = "EPSG:3035|3414|4214|4258|4267|4283|4326|25832|26901->26923|27700|32601->32660|32701->32760| ";
+        const message = `Found unsupported projection: ${projection}. <br>Supported projections are: <br>${supportedProjections}. <br>Cannot proceed without a supported projection.`;
+
+        console.error(`${scriptName}: Error - ${message}`);
+        WazeWrap.Alerts.error(scriptName, message);
+
+        return; // Stop further processing
+      }
+    }
+
+    // Set default external projection if no match was found at all
+    if (!foundProjection) {
+      const message = "No External projection found. <br>Defaulting to EPSG:4326 (WGS 84).";
+      if (debug) {
+        console.warn(`${scriptName}: Warning - ${message}`);
+        WazeWrap.Alerts.info(scriptName, message);
+      }
+      parser.externalProjection = projectionMap["EPSG:4326"]; // Default to WGS 84
+    }
+
+    if (debug) console.log(`${scriptName}: External projection is: ${parser.externalProjection}`);
+    if (debug) console.log(`${scriptName}: Internal projection is: ${parser.internalProjection}`);
 
     let features;
     try {
       features = parser.read(fileContent);
-      if (debug) console.log(`${scriptName}: parseFile(): Found ${features.length} features for ${filename}.${orgFileext}.`);
 
       if (features.length === 0) {
+        toggleParsingMessage(false); // Turned on in addGeometryLayer()
         WazeWrap.Alerts.error(scriptName, `No features found in file ${filename}.${orgFileext}`);
-        console.warn(`${scriptName}: parseFile(): No features found in file ${filename}.${orgFileext}.`);
-        return; // Early return to stop further execution when no features are found
+        console.warn(`${scriptName}: No features found in file ${filename}.${orgFileext}.`);
+        return; // stop further execution when no features are found
       }
+
+      if (debug) console.log(`${scriptName}: Found ${features.length} features for ${filename}.${orgFileext}.`);
     } catch (error) {
-      console.error(`${scriptName}: parseFile(): Error parsing file content for ${filename}.${orgFileext}:`, error);
-      WazeWrap.Alerts.error(scriptName, `Error parsing file content for ${filename}.${orgFileext}: ${error}`);
+      toggleParsingMessage(false); // Turned on in addGeometryLayer()
+      console.error(`${scriptName}: Error parsing file content for ${filename}.${orgFileext}:`, error);
+      WazeWrap.Alerts.error(scriptName, `Error parsing file content for ${filename}.${orgFileext}:\n${error}`);
       return;
     }
+
+    toggleParsingMessage(false); // Turned on in addGeometryLayer()
 
     if (fileObj.labelattribute) {
       createLayerWithLabel(fileObj, features, parser.externalProjection); // Use the stored label attribute if it already exists
     } else {
-      if (debug) console.log(`${scriptName}: parseFile(): features.slice:`, features.slice(0, 9));
-      // Await user interaction to get the label attribute when it's not already set
-      presentFeaturesAttributes(features.slice(0, 50), features.length)
-        .then((selectedAttribute) => {
-          if (selectedAttribute) {
-            //&& typeof features[0].attributes[selectedAttribute] === "string"
-            fileObj.labelattribute = selectedAttribute;
-            console.log(`${scriptName}: parseFile(): labelattribute selected: ${fileObj.labelattribute}`);
-            createLayerWithLabel(fileObj, features, parser.externalProjection);
-          }
-        })
-        .catch((cancelReason) => {
-          console.warn(`${scriptName}: parseFile(): User cancelled attribute selection: ${cancelReason}`);
-        });
-    }
+      if (Array.isArray(features)) {
+        if (debug) console.log(`${scriptName}: Sample features objects:`, features.slice(0, 10));
 
-    if (debug) console.log(`${scriptName}: parseFile() finished.`);
+        // Await user interaction to get the label attribute when it's not already set
+        presentFeaturesAttributes(features.slice(0, 50), features.length)
+          .then((selectedAttribute) => {
+            if (selectedAttribute) {
+              fileObj.labelattribute = selectedAttribute;
+              console.log(`${scriptName}: Label attribute selected: ${fileObj.labelattribute}`);
+              createLayerWithLabel(fileObj, features, parser.externalProjection);
+            }
+          })
+          .catch((cancelReason) => {
+            console.warn(`${scriptName}: User cancelled attribute selection and import: ${cancelReason}`);
+          });
+      } else {
+        // Directly create the layer with the features when it is not an array
+        createLayerWithLabel(fileObj, features, parser.externalProjection);
+      }
+    }
   }
 
   /******************************************************************************************
@@ -1230,11 +1636,8 @@ var geometries = function () {
    * - Registers the layer with a group toggler, providing UI controls for visibility management.
    * - Integrates the layer into the main map and manages additional elements like toggling and list updates.
    ******************************************************************************************/
-
   function createLayerWithLabel(fileObj, features, externalProjection) {
-    if (debug) console.log(`${scriptName}: createLayerWithLabel(): Called`);
-
-    toggleLoadingMessage(true);
+    toggleLoadingMessage(true); // Show the user a loading message!
 
     const delayDuration = 300;
     setTimeout(() => {
@@ -1246,49 +1649,34 @@ var geometries = function () {
             if (!labelTemplate || labelTemplate.trim() === "") {
               return "";
             }
-            // Handel new lines  /n
-            labelTemplate = labelTemplate.replace(/\\n/g, "\n");
-            // Handle both direct names and templated inputs with placeholders
-            try {
-              // Check if `labelTemplate` is a direct attribute name without placeholder format
-              if (!labelTemplate.includes("${")) {
-                if (feature.attributes.hasOwnProperty(labelTemplate)) {
-                  return feature.attributes[labelTemplate] || "";
-                }
-                return ""; // Return empty if the attribute is directly named and not found
-              }
 
-              // Handle templated inputs like '${name}'
-              labelTemplate = labelTemplate
-                .replace(/\${(.*?)}/g, (match, attributeName) => {
-                  attributeName = attributeName.trim();
+            // Handle new lines /n & <br>
+            labelTemplate = labelTemplate.replace(/\\n/g, "\n").replace(/<br\s*\/?>/gi, "\n");
 
-                  if (feature.attributes.hasOwnProperty(attributeName)) {
-                    return feature.attributes[attributeName] || "";
-                  }
-
-                  return ""; // Replace with empty if attribute not found
-                })
-                .trim();
-            } catch (error) {
-              console.error(`${scriptName}: Error processing label expression:`, error);
-              return "";
+            // If the labelTemplate does not include a ${ placeholder, return it as is
+            if (!labelTemplate.includes("${")) {
+              return labelTemplate;
             }
+
+            // Handle templated inputs like '${name}'
+            labelTemplate = labelTemplate
+              .replace(/\${(.*?)}/g, (match, attributeName) => {
+                attributeName = attributeName.trim();
+
+                if (feature.attributes.hasOwnProperty(attributeName)) {
+                  let attributeValue = feature.attributes[attributeName] || "";
+                  // Replace <br> with \n in the attribute value
+                  attributeValue = attributeValue.replace(/<br\s*\/?>/gi, "\n");
+                  return attributeValue;
+                }
+
+                return ""; // Replace with empty if attribute not found
+              })
+              .trim();
 
             return labelTemplate;
           },
-          getOffset: function () {
-            return -(W.map.getZoom() + 5);
-          },
-          getSmooth: function () {
-            return "";
-          },
-          getReadable: function () {
-            return "1";
-          },
         };
-
-        if (debug) console.log(`${scriptName}: labelContext() = : ${labelContext}`);
 
         const layerStyle = {
           stroke: true,
@@ -1304,12 +1692,12 @@ var geometries = function () {
           labelOutlineColor: "black",
           labelOutlineWidth: fileObj.fontsize / 4,
           labelAlign: fileObj.labelpos,
-          pathLabel: "${formatLabel}",
           label: "${formatLabel}",
-          labelSelect: false,
-          pathLabelYOffset: "${getOffset}",
-          pathLabelCurve: "${getSmooth}",
-          pathLabelReadable: "${getReadable}",
+          //pathLabel: "${formatLabel}",
+          //labelSelect: false,
+          //pathLabelYOffset: "${getOffset}",
+          //pathLabelCurve: "${getSmooth}",
+          //pathLabelReadable: "${getReadable}",
         };
 
         let defaultStyle = new OpenLayers.Style(layerStyle, { context: labelContext });
@@ -1326,18 +1714,7 @@ var geometries = function () {
         WME_Geometry.styleMap = new OpenLayers.StyleMap(defaultStyle);
         WME_Geometry.addFeatures(features);
 
-        if (debug) console.log(`${scriptName}: createLayerWithLabel(): Using OpenLayers version: ${OpenLayers.VERSION_NUMBER}`);
-        if (debug) console.log(`${scriptName}: createLayerWithLabel(): New OL Geometry Object:`, WME_Geometry);
-
-        const existingLayer = storedLayers.find((layer) => layer.filename === fileObj.filename);
-
-        if (!existingLayer) {
-          storedLayers.push(fileObj);
-          localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
-          console.info(`${scriptName}: createLayerWithLabel(): Stored file - ${fileObj.filename} : ${localStorage.WMEGeoLayers.length / 1000} kB in localStorage`);
-        } else {
-          console.log(`${scriptName}: createLayerWithLabel(): Skipping duplicate storage for file: ${fileObj.filename}`);
-        }
+        if (debug) console.log(`${scriptName}: New OpenLayers Geometry Object:`, WME_Geometry);
 
         if (!groupToggler) {
           groupToggler = addGroupToggler(false, "layer-switcher-group_wme_geometries", "WME Geometries");
@@ -1345,10 +1722,33 @@ var geometries = function () {
 
         addToGeoList(fileObj.filename, fileObj.color, fileObj.orgFileext, fileObj.labelattribute, externalProjection);
         addLayerToggler(groupToggler, fileObj.filename, WME_Geometry);
+
+        // Add the layer to the map before attempting storage
         W.map.addLayer(WME_Geometry);
-        if (debug) console.log(`${scriptName}: createLayerWithLabel(): New Layer ${fileObj.filename} Added`);
+
+        // Check and store layers in localStorage
+        const existingLayer = storedLayers.find((layer) => layer.filename === fileObj.filename);
+
+        if (!existingLayer) {
+          storedLayers.push(fileObj);
+          try {
+            const compressedData = LZString.compress(JSON.stringify(storedLayers));
+            const compressedDataSize = new Blob([compressedData]).size / 1024; // Size in kilobytes
+            localStorage.WMEGeoLayers = compressedData;
+            console.info(`${scriptName}: Stored file - ${fileObj.filename} : ${compressedDataSize.toFixed(2)} kB in localStorage`);
+          } catch (error) {
+            const compressedData = LZString.compress(JSON.stringify(storedLayers));
+            const compressedDataSize = new Blob([compressedData]).size / 1024; // Calculate size in kilobytes for logging
+            console.error(`${scriptName}: Failed to store data in localStorage:`, error);
+            WazeWrap.Alerts.error("Storage Error", `Failed to store data (${compressedDataSize.toFixed(2)} kB). This is due to storage limits being exceeded.  Layer will not be saved :(`);
+          }
+        } else {
+          console.log(`${scriptName}: Skipping duplicate storage for file: ${fileObj.filename}`);
+        }
+
+        if (debug) console.log(`${scriptName}: New Layer ${fileObj.filename} Added`);
       } finally {
-        toggleLoadingMessage(false);
+        toggleLoadingMessage(false); // Turn off the loading message!
       }
     }, delayDuration);
   }
@@ -1376,8 +1776,41 @@ var geometries = function () {
           color: #ffffff;
           border: 2px solid #ff5733;
         `;
-        loadingMessage.textContent = "New Geometries Loading, please wait...";
+        loadingMessage.textContent = "WME Geometries: New Geometries Loading, please wait...";
         document.body.appendChild(loadingMessage);
+      }
+    } else {
+      if (existingMessage) {
+        existingMessage.remove();
+      }
+    }
+  }
+
+  function toggleParsingMessage(show) {
+    const existingMessage = document.getElementById("WMEGeoParsingMessage");
+
+    if (show) {
+      if (!existingMessage) {
+        const parsingMessage = document.createElement("div");
+        parsingMessage.id = "WMEGeoParsingMessage";
+        parsingMessage.style = `
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          padding: 16px 32px;
+          background: rgba(0, 0, 0, 0.7);
+          border-radius: 12px;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+          font-family: 'Arial', sans-serif;
+          font-size: 1.1rem;
+          text-align: center;
+          z-index: 2000;
+          color: #ffffff;
+          border: 2px solid #33ff57;
+        `;
+        parsingMessage.textContent = "WME Geometries: Parsing and converting input files, please wait...";
+        document.body.appendChild(parsingMessage);
       }
     } else {
       if (existingMessage) {
@@ -1415,105 +1848,65 @@ var geometries = function () {
       const attributes = Array.from(new Set(allAttributes.flat()));
 
       let attributeInput = document.createElement("div");
-      attributeInput.style.position = "fixed";
-      attributeInput.style.left = "50%";
-      attributeInput.style.top = "50%";
-      attributeInput.style.transform = "translate(-50%, -50%)";
-      attributeInput.style.zIndex = "1001";
-      attributeInput.style.width = "80%";
-      attributeInput.style.maxWidth = "600px";
-      attributeInput.style.padding = "10px";
-      attributeInput.style.background = "#fff";
-      attributeInput.style.border = "3px solid #ccc";
-      attributeInput.style.borderRadius = "5%";
-      attributeInput.style.display = "flex";
-      attributeInput.style.flexDirection = "column";
+      attributeInput.style.cssText = "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background: #fff; border: 3px solid #ccc; border-radius: 5%; display: flex; flex-direction: column;";
 
       let title = document.createElement("label");
-      title.style.marginBottom = "5px";
-      title.style.color = "#333";
-      title.style.alignSelf = "center";
-      title.style.fontSize = "1.2em";
+      title.style.cssText = "margin-bottom: 5px; color: #333; align-self: center; font-size: 1.2em;";
       title.innerHTML = `Feature Attributes<br>Total Features: ${nbFeatures}`;
       attributeInput.appendChild(title);
 
       let message = document.createElement("p");
-      message.style.marginTop = "10px";
-      message.style.color = "#777";
-      message.style.textAlign = "center";
+      message.style.cssText = "margin-top: 10px; color: #777; text-align: center;";
 
-      let selectBox, customLabelInput;
+      let propsContainer = document.createElement("div");
+      propsContainer.style.cssText = "overflow-y: auto; max-height: 300px; padding: 5px; background-color: #f0f0f0; border: 1px solid black; border-radius: 10px;";
+      attributeInput.appendChild(propsContainer);
 
-      if (attributes.length === 0) {
-        message.textContent = "No attributes found to use as labels for the features.";
-        attributeInput.appendChild(message);
-      } else {
-        let propsContainer = document.createElement("div");
-        propsContainer.style.overflowY = "auto";
-        propsContainer.style.maxHeight = "300px";
-        propsContainer.style.padding = "5px";
-        propsContainer.style.backgroundColor = "#f0f0f0"; // Light gray color
-        propsContainer.style.border = "1px solid black";
-        propsContainer.style.borderRadius = "10px";
-        attributeInput.appendChild(propsContainer);
+      features.forEach((feature, index) => {
+        let featureHeader = document.createElement("label");
+        featureHeader.style.cssText = "color: #333; font-size: 1.1em;";
+        featureHeader.textContent = `Feature ${index + 1}`;
+        propsContainer.appendChild(featureHeader);
 
-        features.forEach((feature, index) => {
-          let featureHeader = document.createElement("label");
-          featureHeader.textContent = `Feature ${index + 1}`;
-          featureHeader.style.color = "#333";
-          featureHeader.style.fontSize = "1.1em";
-          propsContainer.appendChild(featureHeader);
-
-          let propsList = document.createElement("ul");
-          Object.keys(feature.attributes).forEach((key) => {
-            let propItem = document.createElement("li");
-            propItem.innerHTML = `<span style="color: blue;">${key}</span>: ${feature.attributes[key]}`;
-            propItem.style.listStyleType = "none";
-            propItem.style.padding = "2px";
-            propItem.style.fontSize = "0.9em";
-            propsList.appendChild(propItem);
-          });
-          propsContainer.appendChild(propsList);
+        let propsList = document.createElement("ul");
+        Object.keys(feature.attributes).forEach((key) => {
+          let propItem = document.createElement("li");
+          propItem.style.cssText = "list-style-type: none; padding: 2px; font-size: 0.9em;";
+          propItem.innerHTML = `<span style="color: blue;">${key}</span>: ${feature.attributes[key]}`;
+          propsList.appendChild(propItem);
         });
+        propsContainer.appendChild(propsList);
+      });
 
-        let inputLabel = document.createElement("label");
-        inputLabel.textContent = "Select Attribute to use for Label:";
-        inputLabel.style.display = "block";
-        inputLabel.style.marginTop = "15px";
-        attributeInput.appendChild(inputLabel);
+      let inputLabel = document.createElement("label");
+      inputLabel.style.cssText = "display: block; margin-top: 15px;";
+      inputLabel.textContent = "Select Attribute to use for Label:";
+      attributeInput.appendChild(inputLabel);
 
-        selectBox = document.createElement("select");
-        selectBox.style.width = "90%";
-        selectBox.style.padding = "8px";
-        selectBox.style.marginTop = "5px";
-        selectBox.style.marginLeft = "5%";
-        selectBox.style.marginRight = "5%";
-        selectBox.style.borderRadius = "5px";
+      let selectBox = document.createElement("select");
+      selectBox.style.cssText = "width: 90%; padding: 8px; margin-top: 5px; margin-left: 5%; margin-right: 5%; border-radius: 5px;";
+      attributes.forEach((attribute) => {
+        let option = document.createElement("option");
+        option.value = attribute;
+        option.textContent = attribute;
+        selectBox.appendChild(option);
+      });
 
-        attributes.forEach((attribute) => {
-          let option = document.createElement("option");
-          option.value = attribute;
-          option.textContent = attribute;
-          selectBox.appendChild(option);
-        });
+      // Add "No Labels" and "Custom Label" options
+      let noLabelsOption = document.createElement("option");
+      noLabelsOption.value = "";
+      noLabelsOption.textContent = "- No Labels -";
+      selectBox.appendChild(noLabelsOption);
 
-        // Add "No Labels" option
-        let noLabelsOption = document.createElement("option");
-        noLabelsOption.value = " ";
-        noLabelsOption.textContent = "- No Labels -";
-        selectBox.appendChild(noLabelsOption);
+      let customLabelOption = document.createElement("option");
+      customLabelOption.value = "custom";
+      customLabelOption.textContent = "Custom Label";
+      selectBox.appendChild(customLabelOption);
 
-        // Add "Custom Label" option
-        let customLabelOption = document.createElement("option");
-        customLabelOption.value = "custom";
-        customLabelOption.textContent = "Custom Label";
-        selectBox.appendChild(customLabelOption);
+      attributeInput.appendChild(selectBox);
 
-        attributeInput.appendChild(selectBox);
-
-        // Create a hidden textarea for custom labels
-        customLabelInput = document.createElement("textarea");
-        customLabelInput.placeholder = `Enter your custom label using \${attributeName} for dynamic values.
+      let customLabelInput = document.createElement("textarea");
+      customLabelInput.placeholder = `Enter your custom label using \${attributeName} for dynamic values.
         Feature 1
           BridgeNumber: 01995
           FacilityCarried: U.S. ROUTE 6
@@ -1531,57 +1924,34 @@ var geometries = function () {
           #:01995
           U.S. ROUTE 6 over
           BIG RIVER`;
-        customLabelInput.style.width = "90%";
-        customLabelInput.style.height = "300px";
-        customLabelInput.style.maxHeight = "300px";
-        customLabelInput.style.padding = "8px";
-        customLabelInput.style.fontSize = "1rem";
-        customLabelInput.style.border = "2px solid #ddd";
-        customLabelInput.style.borderRadius = "5px";
-        customLabelInput.style.boxSizing = "border-box";
-        customLabelInput.style.resize = "vertical"; // Limit resizing to vertical only
-        customLabelInput.style.display = "none"; // Hide it initially
-        customLabelInput.style.marginTop = "5px";
-        customLabelInput.style.marginLeft = "5%";
-        customLabelInput.style.marginRight = "5%";
-        customLabelInput.style.borderRadius = "5px";
-        attributeInput.appendChild(customLabelInput);
+      customLabelInput.style.cssText = "width: 90%; height: 300px; max-height: 300px; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical; display: none; margin-top: 5px; margin-left: 5%; margin-right: 5%;";
+      attributeInput.appendChild(customLabelInput);
 
-        // Show custom label input if "Custom Label" is selected
-        selectBox.addEventListener("change", () => {
-          if (selectBox.value === "custom") {
-            customLabelInput.style.display = "block";
-          } else {
-            customLabelInput.style.display = "none";
-          }
-        });
-      }
+      selectBox.addEventListener("change", () => {
+        customLabelInput.style.display = selectBox.value === "custom" ? "block" : "none";
+      });
 
       let buttonsContainer = document.createElement("div");
-      buttonsContainer.style.marginTop = "10px";
-      buttonsContainer.style.display = "flex";
-      buttonsContainer.style.justifyContent = "flex-end";
-      buttonsContainer.style.width = "90%";
-      buttonsContainer.style.marginLeft = "5%";
-      buttonsContainer.style.marginRight = "5%";
+      buttonsContainer.style.cssText = "margin-top: 10px; display: flex; justify-content: flex-end; width: 90%; margin-left: 5%; margin-right: 5%;";
 
       let importButton = createButton("Import", "#8BC34A", "#689F38", "button");
       importButton.onclick = () => {
-        // Check if "Custom Label" is selected and the input for it is empty
         if (selectBox.value === "custom" && customLabelInput.value.trim() === "") {
-          // Display error message using WazeWrap
           WazeWrap.Alerts.error(scriptName, "Please enter a custom label expression when selecting 'Custom Label'.");
-          return; // Exit the function to prevent resolving
+          return;
         }
 
         document.body.removeChild(overlay);
 
-        // Resolve with custom label if "Custom Label" is chosen and has input, else resolve with selected value
+        let resolvedValue;
         if (selectBox.value === "custom" && customLabelInput.value.trim() !== "") {
-          resolve(customLabelInput.value.trim());
+          resolvedValue = customLabelInput.value.trim();
+        } else if (selectBox.value !== "- No Labels -") {
+          resolvedValue = `\${${selectBox.value}}`;
         } else {
-          resolve(selectBox && selectBox.options.length > 0 ? selectBox.value : " ");
+          resolvedValue = "";
         }
+        resolve(resolvedValue);
       };
 
       let cancelButton = createButton("Cancel", "#E57373", "#D32F2F", "button");
@@ -1596,13 +1966,7 @@ var geometries = function () {
 
       let overlay = document.createElement("div");
       overlay.id = "presentFeaturesAttributesOverlay";
-      overlay.style.position = "fixed";
-      overlay.style.top = "0";
-      overlay.style.left = "0";
-      overlay.style.width = "100%";
-      overlay.style.height = "100%";
-      overlay.style.background = "rgba(0,0,0,0.5)";
-      overlay.style.zIndex = "1000";
+      overlay.style.cssText = "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;";
       overlay.appendChild(attributeInput);
 
       document.body.appendChild(overlay);
@@ -1634,53 +1998,28 @@ var geometries = function () {
   function addToGeoList(filename, color, fileext, labelattribute, externalProjection) {
     let liObj = document.createElement("li");
     liObj.id = filename.replace(/[^a-z0-9_-]/gi, "_");
-
-    liObj.style.position = "relative";
-    liObj.style.padding = "2px 2px";
-    liObj.style.margin = "2px 0";
-    liObj.style.background = "transparent";
-    liObj.style.borderRadius = "3px";
-    liObj.style.display = "flex";
-    liObj.style.justifyContent = "space-between";
-    liObj.style.alignItems = "center";
-    liObj.style.transition = "background 0.2s";
-    liObj.style.fontSize = "0.95em";
+    liObj.style.cssText = "position: relative; padding: 2px 2px; margin: 2px 0; background: transparent; border-radius: 3px; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; font-size: 0.95em;";
 
     liObj.addEventListener("mouseover", function () {
       liObj.style.background = "#eaeaea";
     });
+
     liObj.addEventListener("mouseout", function () {
       liObj.style.background = "transparent";
     });
 
     let fileText = document.createElement("span");
-    fileText.style.color = color;
+    fileText.style.cssText = `color: ${color}; flex-grow: 1; flex-shrink: 1; flex-basis: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 5px;`;
     fileText.innerHTML = filename;
-    fileText.style.flexGrow = "1";
-    fileText.style.flexShrink = "1";
-    fileText.style.flexBasis = "auto";
-    fileText.style.overflow = "hidden";
-    fileText.style.textOverflow = "ellipsis";
-    fileText.style.whiteSpace = "nowrap";
-    fileText.style.marginRight = "5px";
-    //liObj.appendChild(fileText);
 
-    // Create the tooltip content
     const tooltipContent = `File Type: ${fileext}\nLabel: ${labelattribute}\nProjection: ${externalProjection}`;
-    fileText.title = tooltipContent; // Set the tooltip
+    fileText.title = tooltipContent;
+
     liObj.appendChild(fileText);
 
     let removeButton = document.createElement("button");
     removeButton.innerHTML = "X";
-    removeButton.style.flex = "none";
-    removeButton.style.backgroundColor = "#E57373";
-    removeButton.style.color = "white";
-    removeButton.style.border = "none";
-    removeButton.style.padding = "0";
-    removeButton.style.width = "16px";
-    removeButton.style.height = "16px";
-    removeButton.style.cursor = "pointer";
-    removeButton.style.marginLeft = "3px";
+    removeButton.style.cssText = "flex: none; background-color: #E57373; color: white; border: none; padding: 0; width: 16px; height: 16px; cursor: pointer; margin-left: 3px;";
     removeButton.addEventListener("click", () => removeGeometryLayer(filename));
     liObj.appendChild(removeButton);
 
@@ -1699,32 +2038,16 @@ var geometries = function () {
       }
     } else if (type === "input") {
       element = document.createElement("input");
-      element.type = "button"; // Input elements need a type attribute
-
-      element.value = text; // Use value for input types
+      element.type = "button";
+      element.value = text;
     } else {
       element = document.createElement("button");
       element.textContent = text;
     }
 
-    element.style.padding = "8px 0px";
-    element.style.fontSize = "1rem";
-    element.style.border = `2px solid ${color}`;
-    element.style.borderRadius = "20px";
-    element.style.cursor = "pointer";
-    element.style.backgroundColor = color;
-    element.style.color = "white";
-    element.style.boxSizing = "border-box";
-    element.style.transition = "background-color 0.3s, border-color 0.3s";
-    element.style.fontWeight = "bold";
-    element.style.textAlign = "center";
-    element.style.display = "flex";
-    element.style.justifyContent = "center";
-    element.style.alignItems = "center";
-    element.style.width = "100%";
-    element.style.marginTop = "3px";
-    element.style.marginLeft = "5px"; // Add small margin on the left
-    element.style.marginRight = "5px"; // Add small margin on the right
+    element.style.cssText = `padding: 8px 0; font-size: 1rem; border: 2px solid ${color}; border-radius: 20px; cursor: pointer; background-color: ${color}; color: white; 
+    box-sizing: border-box; transition: background-color 0.3s, border-color 0.3s; font-weight: bold; text-align: center; display: flex; justify-content: center; align-items: center; 
+    width: 100%; margin-top: 3px; margin-left: 5px; margin-right: 5px;`;
 
     element.addEventListener("mouseover", function () {
       element.style.backgroundColor = mouseoverColor;
@@ -1736,7 +2059,7 @@ var geometries = function () {
       element.style.borderColor = color;
     });
 
-    return element;
+    return element; // Assuming you need to return the created element
   }
 
   /***************************************************************************
@@ -1761,16 +2084,12 @@ var geometries = function () {
    * - Logs the changes in local storage size.
    ****************************************************************************/
   function removeGeometryLayer(filename) {
-    if (debug) {
-      console.log(`${scriptName}: removeGeometryLayer(): called for (${filename})`);
-    }
-
     const layerName = `Geometry: ${filename}`;
     const layers = W.map.getLayersBy("layerGroup", "wme_geometry");
     const layerToDestroy = layers.find((layer) => layer.name === layerName);
 
     if (!layerToDestroy) {
-      console.log(`${scriptName}: removeGeometryLayer(): No layer found for (${filename})`);
+      console.log(`${scriptName}: No layer found for (${filename})`);
       return;
     }
 
@@ -1790,20 +2109,23 @@ var geometries = function () {
       togglerItem.parentElement.removeChild(togglerItem);
     }
 
-    const initialLocalStorageSize = localStorage.WMEGeoLayers ? localStorage.WMEGeoLayers.length / 1000 : 0;
+    // Calculate initial storage size using Blob
+    const initialLocalStorageSize = localStorage.WMEGeoLayers ? new Blob([localStorage.WMEGeoLayers]).size / 1024 : 0;
 
     // Update local storage based on the remaining layers
     if (storedLayers.length === 0) {
       localStorage.removeItem("WMEGeoLayers");
       storedLayers = [];
     } else {
-      localStorage.WMEGeoLayers = LZString.compress(JSON.stringify(storedLayers));
+      const compressedData = LZString.compress(JSON.stringify(storedLayers));
+      localStorage.WMEGeoLayers = compressedData;
     }
 
-    const newLocalStorageSize = localStorage.WMEGeoLayers ? localStorage.WMEGeoLayers.length / 1000 : 0;
+    // Calculate new storage size using Blob
+    const newLocalStorageSize = localStorage.WMEGeoLayers ? new Blob([localStorage.WMEGeoLayers]).size / 1024 : 0;
     const sizeChange = newLocalStorageSize - initialLocalStorageSize;
 
-    console.log(`${scriptName}: removeGeometryLayer(): Removed file (${filename}). Storage size changed by ${sizeChange}kB. Total size is now ${newLocalStorageSize}kB.`);
+    console.log(`${scriptName}: Removed file - ${filename}. Storage size changed by ${sizeChange.toFixed(2)} kB. Total size is now ${newLocalStorageSize.toFixed(2)} kB.`);
 
     // Remove any list item using the listItemId
     const listItem = document.getElementById(listItemId);
@@ -1831,41 +2153,50 @@ var geometries = function () {
    * - Ensures debug logs are provided for tracing function execution when `debug` mode is active.
    **************************************************************/
   function createLayersFormats() {
-    if (debug) console.log(`${scriptName}: createLayersFormats(): called`);
-
     let formats = {};
     let formathelp = "";
 
-    function tryCreateFormat(formatName, FormatConstructor) {
+    function tryCreateFormat(formatName, formatUtility) {
       try {
-        if (typeof FormatConstructor === "function") {
-          formats[formatName] = new FormatConstructor();
-          console.log(`${scriptName}: Successfully created format: ${formatName}`);
+        if (typeof formatUtility === "function") {
+          // Test if it should be used as a constructor
+          try {
+            const formatInstance = new formatUtility();
+            formats[formatName] = formatInstance;
+          } catch (constructorError) {
+            // If it throws, it's not meant to be used as a constructor
+            formats[formatName] = formatUtility;
+          }
           formathelp += `${formatName} | `;
+          console.log(`${scriptName}: Successfully added format: ${formatName}`);
         } else {
-          throw new Error(`${formatName} is not a valid constructor.`);
+          console.warn(`${scriptName}: ${formatName} is not a valid function or constructor.`);
         }
       } catch (error) {
-        console.error(`${scriptName}: ${formatName} format is not supported:`, error);
+        console.error(`${scriptName}: Error creating format ${formatName}:`, error);
       }
     }
 
-    tryCreateFormat("GEOJSON", OpenLayers.Format.GeoJSON);
-    tryCreateFormat("WKT", GeoWKTer);
-    tryCreateFormat("KML", OpenLayers.Format.KML);
-    tryCreateFormat("GPX", GeoGPXer);
-    tryCreateFormat("GML", OpenLayers.Format.GML);
-    tryCreateFormat("OSM", OpenLayers.Format.OSM);
+    if (typeof OpenLayers !== "undefined" && typeof OpenLayers.Format !== "undefined") {
+      tryCreateFormat("GEOJSON", OpenLayers.Format.GeoJSON);
+      tryCreateFormat("KML", OpenLayers.Format.KML);
+      tryCreateFormat("KMZ", GeoKMZer);
+      tryCreateFormat("GML", OpenLayers.Format.GML);
+      tryCreateFormat("GPX", OpenLayers.Format.GPX);
+      tryCreateFormat("WKT", OpenLayers.Format.WKT);
+    } else {
+      console.error(`${scriptName}: OpenLayers or OpenLayers.Format for GEOJSON, KML, GML, GPX or WKT is not available.`);
+    }
 
-    // Add support for shapefile in ZIP form using shpjs
-    // Note: 'shpjs' is not a constructor like other formats. It provides
-    // a function 'shp()' used for parsing ZIP files containing Shapefiles,
-    // and converting them to GEOJSON output.
-    formats["ZIP"] = "shpjs"; // Using a string to denote usage of shpjs for ZIP
-    console.log(`${scriptName}: Successfully created format: ZIP (shapefile)`);
-    formathelp += "ZIP(SHP,SHX,DBF) | ";
+    if (typeof GeoSHPer !== "undefined") {
+      formats["ZIP"] = "GeoSHPer"; // Denoting the use of the the GeoSHPer library
+      console.log(`${scriptName}: Successfully added format: ZIP (shapefile)`);
+      formathelp += "ZIP(SHP,DBF,PRJ,CPG) | ";
+    } else {
+      console.error(`${scriptName}: Shapefile support (GeoSHPer) is not available.`);
+    }
 
-    console.log(`${scriptName}: Finished loading formats.`);
+    console.log(`${scriptName}: Finished loading document format parsers.`);
     return { formats, formathelp };
   }
 
@@ -1893,8 +2224,6 @@ var geometries = function () {
    * - Logs the creation of the group toggler to the console for debugging purposes.
    *****************************************************************************************/
   function addGroupToggler(isDefault, layerSwitcherGroupItemName, layerGroupVisibleName) {
-    if (debug) console.log(`${scriptName}: addGroupToggler(): called`);
-
     var group;
     if (isDefault === true) {
       group = document.getElementById(layerSwitcherGroupItemName).parentElement.parentElement;
@@ -1937,7 +2266,7 @@ var geometries = function () {
       layerGroupsList.appendChild(group);
     }
 
-    if (debug) console.log(`${scriptName}: addGroupToggler(): Group Toggler created for ${layerGroupVisibleName}`);
+    if (debug) console.log(`${scriptName}: Group Toggler created for ${layerGroupVisibleName}`);
     return group;
   }
 
@@ -1961,8 +2290,6 @@ var geometries = function () {
    * - Logs the creation of the layer toggler for debugging purposes.
    *******************************************************************************************/
   function addLayerToggler(groupToggler, layerName, layerObj) {
-    if (debug) console.log(`${scriptName}: addLayerToggler(): called`);
-
     var layer_container = groupToggler.getElementsByTagName("UL")[0];
     var layerGroupCheckbox = groupToggler.getElementsByClassName("layer-switcher-toggler-tree-category")[0].getElementsByTagName("wz-toggle-switch")[0];
     var toggler = document.createElement("li");
@@ -1982,7 +2309,7 @@ var geometries = function () {
     layerTogglerEventHandler(layerObj);
     layerTogglerGroupEventHandler(togglerCheckbox, layerObj);
 
-    if (debug) console.log(`${scriptName}: addLayerToggler(): Layer Toggler created for ${layerName}`);
+    if (debug) console.log(`${scriptName}: Layer Toggler created for ${layerName}`);
   }
 
   function layerTogglerEventHandler(layerObj) {
@@ -2017,223 +2344,155 @@ var geometries = function () {
     };
   }
 
-  function installPathFollowingLabels() {
-    if (debug) console.log(`${scriptName}: Patching Openlayers.Style with installPathFollowingLabels()........`);
-
-    // Copyright (c) 2015 by Jean-Marc.Viglino [at]ign.fr
-    // Dual-licensed under the CeCILL-B Licence (http://www.cecill.info/)
-    // and the Beerware license (http://en.wikipedia.org/wiki/Beerware),
-    // feel free to use and abuse it in your projects (the code, not the beer ;-).
-    //
-    //* Overwrite the SVG function to allow text along a path
-    //*	setStyle function
-    //*
-    //*	Add new options to the Openlayers.Style
-
-    // pathLabel: {String} Label to draw on the path
-    // pathLabelXOffset: {String} Offset along the line to start drawing text in pixel or %, default: "50%"
-    // pathLabelYOffset: {Number} Distance of the line to draw the text
-    // pathLabelCurve: {String} Smooth the line the label is drawn on (empty string for no)
-    // pathLabelReadable: {String} Make the label readable (empty string for no)
-
-    // *	Extra standard values : all label and text values
-
-    //  *
-    //  * Method: removeChildById
-    //  * Remove child in a node.
-    //  *
-
-    function removeChildById(node, id) {
-      if (node.querySelector) {
-        var c = node.querySelector("#" + id);
-        if (c) node.removeChild(c);
-        return;
+  /******************************************************************************
+   * removeZCoordinates
+   *
+   * Description:
+   * This function processes GeoJSON data to remove Z and M coordinates, ensuring that all geometries contain only 2D coordinates (X, Y).
+   * This is particularly useful when integrating with libraries, such as OpenLayers, that may not support Z or M dimensions.
+   *
+   * Parameters:
+   * @param {Object} geojson - The GeoJSON object that contains features with geometry data that may include Z or M values.
+   *
+   * Behavior:
+   * - Defines a helper function, `stripZ`, to recursively remove additional dimensions from coordinates.
+   * - Iterates over each feature in the GeoJSON data, applying the `stripZ` function to all geometry coordinate arrays.
+   * - Constructs and returns a new GeoJSON object with updated geometries that only include 2D coordinates.
+   * - Ensures compatibility with tools that require strictly 2D geometries by removing unnecessary dimensions.
+   *******************************************************************************************/
+  function removeZCoordinates(geojson) {
+    // Check if the input is a string and parse it
+    if (typeof geojson === "string") {
+      try {
+        geojson = JSON.parse(geojson);
+      } catch (error) {
+        throw new Error("Invalid JSON string provided.");
       }
-      // For old browsers
-      var c = node.childNodes;
-      if (c)
-        for (var i = 0; i < c.length; i++) {
-          if (c[i].id === id) {
-            node.removeChild(c[i]);
-            return;
-          }
-        }
     }
 
-    //  *
-    //  * Method: setStyle
-    //  * Use to set all the style attributes to a SVG node.
-    //  *
-    //  * Takes care to adjust stroke width and point radius to be
-    //  * resolution-relative
-    //  *
-    //  * Parameters:
-    //  * node - {SVGDomElement} An SVG element to decorate
-    //  * style - {Object}
-    //  * options - {Object} Currently supported options include
-    //  *                              'isFilled' {Boolean} and
-    //  *                              'isStroked' {Boolean}
+    // Ensure it is an object and has features property
+    if (typeof geojson !== "object" || !geojson.features || !Array.isArray(geojson.features)) {
+      throw new Error("Input is not a valid GeoJSON object.");
+    }
 
-    var setStyle = OpenLayers.Renderer.SVG.prototype.setStyle;
-    OpenLayers.Renderer.SVG.LABEL_STARTOFFSET = { l: "0%", r: "100%", m: "50%" };
-
-    OpenLayers.Renderer.SVG.prototype.pathText = function (node, style, suffix) {
-      var label = this.nodeFactory(null, "text");
-      label.setAttribute("id", node._featureId + "_" + suffix);
-      if (style.fontColor) label.setAttributeNS(null, "fill", style.fontColor);
-      if (style.fontStrokeColor) label.setAttributeNS(null, "stroke", style.fontStrokeColor);
-      if (style.fontStrokeWidth) label.setAttributeNS(null, "stroke-width", style.fontStrokeWidth);
-      if (style.fontOpacity) label.setAttributeNS(null, "opacity", style.fontOpacity);
-      if (style.fontFamily) label.setAttributeNS(null, "font-family", style.fontFamily);
-      if (style.fontSize) label.setAttributeNS(null, "font-size", style.fontSize);
-      if (style.fontWeight) label.setAttributeNS(null, "font-weight", style.fontWeight);
-      if (style.fontStyle) label.setAttributeNS(null, "font-style", style.fontStyle);
-      if (style.labelSelect === true) {
-        label.setAttributeNS(null, "pointer-events", "visible");
-        label._featureId = node._featureId;
+    function stripZ(coords) {
+      // For multi-dimensional arrays
+      if (Array.isArray(coords[0])) {
+        return coords.map(stripZ);
       } else {
-        label.setAttributeNS(null, "pointer-events", "none");
+        // Return only the first two coordinates
+        return coords.slice(0, 2);
       }
+    }
 
-      function getpath(pathStr, readeable) {
-        var npath = pathStr.split(",");
-        var pts = [];
-        if (!readeable || Number(npath[0]) - Number(npath[npath.length - 2]) < 0) {
-          while (npath.length) pts.push({ x: Number(npath.shift()), y: Number(npath.shift()) });
-        } else {
-          while (npath.length) pts.unshift({ x: Number(npath.shift()), y: Number(npath.shift()) });
-        }
-        return pts;
-      }
-
-      var path = this.nodeFactory(null, "path");
-      var tpid = node._featureId + "_t" + suffix;
-      var tpath = node.getAttribute("points");
-      if (style.pathLabelCurve) {
-        var pts = getpath(tpath, style.pathLabelReadable);
-        var p = pts[0].x + " " + pts[0].y;
-        var dx, dy, s1, s2;
-        dx = (pts[0].x - pts[1].x) / 4;
-        dy = (pts[0].y - pts[1].y) / 4;
-        for (var i = 1; i < pts.length - 1; i++) {
-          p += " C " + (pts[i - 1].x - dx) + " " + (pts[i - 1].y - dy);
-          dx = (pts[i - 1].x - pts[i + 1].x) / 4;
-          dy = (pts[i - 1].y - pts[i + 1].y) / 4;
-          s1 = Math.sqrt(Math.pow(pts[i - 1].x - pts[i].x, 2) + Math.pow(pts[i - 1].y - pts[i].y, 2));
-          s2 = Math.sqrt(Math.pow(pts[i + 1].x - pts[i].x, 2) + Math.pow(pts[i + 1].y - pts[i].y, 2));
-          p += " " + (pts[i].x + (s1 * dx) / s2) + " " + (pts[i].y + (s1 * dy) / s2);
-          dx *= s2 / s1;
-          dy *= s2 / s1;
-          p += " " + pts[i].x + " " + pts[i].y;
-        }
-        p += " C " + (pts[i - 1].x - dx) + " " + (pts[i - 1].y - dy);
-        dx = (pts[i - 1].x - pts[i].x) / 4;
-        dy = (pts[i - 1].y - pts[i].y) / 4;
-        p += " " + (pts[i].x + dx) + " " + (pts[i].y + dy);
-        p += " " + pts[i].x + " " + pts[i].y;
-
-        path.setAttribute("d", "M " + p);
-      } else {
-        if (style.pathLabelReadable) {
-          var pts = getpath(tpath, style.pathLabelReadable);
-          var p = "";
-          for (var i = 0; i < pts.length; i++) p += " " + pts[i].x + " " + pts[i].y;
-          path.setAttribute("d", "M " + p);
-        } else path.setAttribute("d", "M " + tpath);
-      }
-      path.setAttribute("id", tpid);
-
-      var defs = this.createDefs();
-      removeChildById(defs, tpid);
-      defs.appendChild(path);
-
-      var textPath = this.nodeFactory(null, "textPath");
-      textPath.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", "#" + tpid);
-      var align = style.labelAlign || OpenLayers.Renderer.defaultSymbolizer.labelAlign;
-      label.setAttributeNS(null, "text-anchor", OpenLayers.Renderer.SVG.LABEL_ALIGN[align[0]] || "middle");
-      textPath.setAttribute("startOffset", style.pathLabelXOffset || OpenLayers.Renderer.SVG.LABEL_STARTOFFSET[align[0]] || "50%");
-      label.setAttributeNS(null, "dominant-baseline", OpenLayers.Renderer.SVG.LABEL_ALIGN[align[1]] || "central");
-      if (style.pathLabelYOffset) label.setAttribute("dy", style.pathLabelYOffset);
-      //textPath.setAttribute('method','stretch');
-      //textPath.setAttribute('spacing','auto');
-
-      textPath.textContent = style.pathLabel;
-      label.appendChild(textPath);
-
-      removeChildById(this.textRoot, node._featureId + "_" + suffix);
-      this.textRoot.appendChild(label);
+    return {
+      ...geojson,
+      features: geojson.features.map((feature) => ({
+        ...feature,
+        geometry: {
+          ...feature.geometry,
+          coordinates: stripZ(feature.geometry.coordinates),
+        },
+      })),
     };
-
-    OpenLayers.Renderer.SVG.prototype.setStyle = function (node, style, options) {
-      if (node._geometryClass === "OpenLayers.Geometry.LineString" && style.pathLabel) {
-        if (node._geometryClass === "OpenLayers.Geometry.LineString" && style.pathLabel) {
-          var drawOutline = !!style.labelOutlineWidth;
-          // First draw text in halo color and size and overlay the
-          // normal text afterwards
-          if (drawOutline) {
-            var outlineStyle = OpenLayers.Util.extend({}, style);
-            outlineStyle.fontColor = outlineStyle.labelOutlineColor;
-            outlineStyle.fontStrokeColor = outlineStyle.labelOutlineColor;
-            outlineStyle.fontStrokeWidth = style.labelOutlineWidth;
-            if (style.labelOutlineOpacity) outlineStyle.fontOpacity = style.labelOutlineOpacity;
-            delete outlineStyle.labelOutlineWidth;
-            this.pathText(node, outlineStyle, "txtpath0");
-          }
-          this.pathText(node, style, "txtpath");
-          setStyle.apply(this, arguments);
-        }
-      } else setStyle.apply(this, arguments);
-      return node;
-    };
-
-    //  *
-    //  * Method: drawGeometry
-    //  * Remove the textpath if no geometry is drawn.
-    //  *
-    //  * Parameters:
-    //  * geometry - {<OpenLayers.Geometry>}
-    //  * style - {Object}
-    //  * featureId - {String}
-    //  *
-    //  * Returns:
-    //  * {Boolean} true if the geometry has been drawn completely; null if
-    //  *     incomplete; false otherwise
-
-    var drawGeometry = OpenLayers.Renderer.SVG.prototype.drawGeometry;
-    OpenLayers.Renderer.SVG.prototype.drawGeometry = function (geometry, style, id) {
-      var rendered = drawGeometry.apply(this, arguments);
-      if (rendered === false) {
-        removeChildById(this.textRoot, id + "_txtpath");
-        removeChildById(this.textRoot, id + "_txtpath0");
-      }
-      return rendered;
-    };
-
-    // *
-    // * Method: eraseGeometry
-    // * Erase a geometry from the renderer. In the case of a multi-geometry,
-    // *     we cycle through and recurse on ourselves. Otherwise, we look for a
-    // *     node with the geometry.id, destroy its geometry, and remove it from
-    // *     the DOM.
-    // *
-    // * Parameters:
-    // * geometry - {<OpenLayers.Geometry>}
-    // * featureId - {String}
-
-    var eraseGeometry = OpenLayers.Renderer.SVG.prototype.eraseGeometry;
-    OpenLayers.Renderer.SVG.prototype.eraseGeometry = function (geometry, featureId) {
-      eraseGeometry.apply(this, arguments);
-      removeChildById(this.textRoot, featureId + "_txtpath");
-      removeChildById(this.textRoot, featureId + "_txtpath0");
-    };
-    if (debug) console.log(`${scriptName}: installPathFollowingLabels() installed!`);
   }
 
-  // Initialize your script
-  if (W?.userscripts?.state.isInitialized) {
-    init();
-  } else {
-    document.addEventListener("wme-initialized", init, { once: true });
+  function testTransformations() {
+    const testCases = [
+      {
+        inputCRS: "EPSG:4269", // NAD83
+        //yx: false;
+        units: "degrees",
+        points: [
+          { coordinates: [-74.044541, 40.689248], expected: [-8242600.58172, 4966613.255611] },
+          { coordinates: [-122.349302, 47.620507], expected: [-13619862.010171, 6043951.303808] },
+          { coordinates: [-0.08767, 51.508046], expected: [-9759.357694, 6711658.070912] },
+          { coordinates: [151.2153, -33.8568], expected: [16833210.196152, -4009589.934223] },
+        ],
+      },
+      {
+        inputCRS: "EPSG:3035", // ETRS89 / LAEA
+        //yx: false;
+        units: "m",
+        points: [
+          { coordinates: [3756580.72351047, 2890108.68078267], expected: [255421.197404, 6250844.20951241] },
+          { coordinates: [3623203.28874355, 3203589.85042861], expected: [-9759.357694, 6711658.070912] },
+        ],
+      },
+      {
+        inputCRS: "EPSG:4267", // NAD27
+        //yx: true;
+        units: "degrees",
+        points: [
+          { coordinates: [-74.0449283, 40.689221], expected: [-8242600.58172, 4966613.255611] },
+          { coordinates: [-122.3480695, 47.6206895], expected: [-13619862.010171, 6043951.303808] },
+          { coordinates: [-87.6188847, 41.8757213], expected: [-9753699.24207752, 5142393.18430405] },
+        ],
+      },
+    ];
+
+    const targetCRS = "EPSG:900913"; // Internal projection
+    const tolerance = 0.00001; // Tolerance level
+    const tolerancePercentage = tolerance * 100; // Convert to percentage for comparison
+
+    testCases.forEach((testCase, index) => {
+      testCase.points.forEach((point, pointIndex) => {
+        const [inputX, inputY] = point.coordinates;
+        const expected = point.expected;
+
+        try {
+          // Log input points
+          console.log(`Test Case ${index + 1}.${pointIndex + 1} Input Point: [${inputX.toFixed(8)}, ${inputY.toFixed(8)}]`);
+
+          // Create a point ensuring it's treated as geographic
+          const pointOL = new OpenLayers.Geometry.Point(inputX, inputY); // (Lon, Lat)
+
+          // Set up projections
+          const projIn = new OpenLayers.Projection(testCase.inputCRS); // Input projection
+          const projOut = new OpenLayers.Projection(targetCRS); // Target projection
+
+          // Log the projections being used
+          console.log(`Transforming from ${testCase.inputCRS} to ${targetCRS}`);
+
+          // Transform the point correctly
+          pointOL.transform(projIn, projOut);
+
+          // Log the expected and actual output
+          console.log(`Expected: [${expected[0].toFixed(8)}, ${expected[1].toFixed(8)}]`);
+          console.log(`Got: [${pointOL.x.toFixed(8)}, ${pointOL.y.toFixed(8)}]`);
+
+          // Calculate differences
+          const olXDiff = Math.abs(expected[0] - pointOL.x);
+          const olYDiff = Math.abs(expected[1] - pointOL.y);
+
+          // Calculate percentage differences
+          const olXPercentageDiff = (olXDiff / Math.abs(expected[0] || 1)) * 100; // Avoid division by zero
+          const olYPercentageDiff = (olYDiff / Math.abs(expected[1] || 1)) * 100; // Avoid division by zero
+
+          // Log the percentage differences
+          console.log(`X Percentage Difference: ${olXPercentageDiff.toFixed(6)}%`);
+          console.log(`Y Percentage Difference: ${olYPercentageDiff.toFixed(6)}%`);
+
+          // Check if the percentage differences are within the defined tolerance
+          const olXWithinTolerance = olXPercentageDiff < tolerancePercentage;
+          const olYWithinTolerance = olYPercentageDiff < tolerancePercentage;
+
+          if (!olXWithinTolerance) {
+            console.warn(`OpenLayers X coordinate percentage difference exceeds tolerance of ${tolerancePercentage.toFixed(6)}%`);
+          } else {
+            console.log(`OpenLayers X coordinate is within percentage tolerance.`);
+          }
+
+          if (!olYWithinTolerance) {
+            console.warn(`OpenLayers Y coordinate percentage difference exceeds tolerance of ${tolerancePercentage.toFixed(6)}%`);
+          } else {
+            console.log(`OpenLayers Y coordinate is within percentage tolerance.`);
+          }
+        } catch (error) {
+          console.error(`Error processing coordinates at Test Case ${index + 1}.${pointIndex + 1}: ${error.message}`);
+        }
+      });
+    });
   }
 };
 geometries();
