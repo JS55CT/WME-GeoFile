@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
-// @version             2025.02.16.01
+// @version             2025.02.23.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -24,7 +24,9 @@
 // @require             https://update.greasyfork.org/scripts/523870/1521199/GeoGPXer.js
 // @require             https://update.greasyfork.org/scripts/526229/1533569/GeoGMLer.js
 // @require             https://update.greasyfork.org/scripts/526996/1537647/GeoSHPer.js
+// @connect             tigerweb.geo.census.gov
 // @grant               unsafeWindow
+// @grant               GM_xmlhttpRequest
 // @license             MIT
 // @original-author     Timbones
 // @original-contributors wlodek76, Twister-UK
@@ -52,15 +54,14 @@ var geometries = function () {
   "use strict";
   const scriptMetadata = GM_info.script;
   const scriptName = scriptMetadata.name;
-  let maxlabels = 100000; // maximum number of features that will be shown with labels
   let geolist;
   let debug = false;
-  let useWmeSDK = false;
   let forceGeoJSON = false; // Default to using OpenLayers Parser
   let formats;
   let formathelp;
   let layerindex = 0;
   let storedLayers = [];
+  let db;
   let groupToggler;
   let projectionMap = {};
 
@@ -147,40 +148,122 @@ var geometries = function () {
     });
   }
 
-  /*************************************************************************************
+  /**
    * loadLayers
+   * 
+   * Loads all saved layers from the IndexedDB and processes each one asynchronously.
+   * This function retrieves the entire set of stored layers, decompresses them,
+   * and invokes the parsing function for each layer, enabling them to be rendered or manipulated further.
    *
-   * Description:
-   * Loads and initializes geometrical layers from local storage into the current map environment. This function retrieves
-   * saved layers and processes each one to ensure they are displayed correctly on the map.
+   * Workflow Details:
+   * 1. Logs the start of the loading process to the console.
+   * 2. Initiates a read-only transaction with the IndexedDB to fetch all stored layers.
+   * 3. If layers are available:
+   *    a. Displays a parsing message indicating processing is underway.
+   *    b. Iterates over each stored layer asynchronously, using `loadLayer` to fetch and decompress each layer individually.
+   *    c. Calls `parseFile` on each successfully loaded layer to process and render it.
+   *    d. Ensures the parsing message is hidden upon completion of all operations.
+   * 4. Logs a message when no layers are present to be loaded.
    *
-   * Behavior:
-   * - Checks if any geometrical data is stored in `localStorage` under the key `WMEGeoLayers`.
-   * - If present, decompresses and parses the stored string into the `storedLayers` array.
-   * - Iterates over each stored layer, applying the `parseFile` function to render them in the map interface.
-   * - Initializes `storedLayers` as an empty array if no data is found in local storage.
-   * - Logs the loading process in the console for traceability.
+   * Error Handling:
+   * - Logs and rejects any errors occurring during the IndexedDB retrieval process.
+   * - Catches and logs errors for each specific layer processing attempt to avoid interrupting the overall loading sequence.
    *
-   * Notes:
-   * - Assumes the existence of the `LZString` library for decompression and the `parseFile` function for layer processing.
-   * - Utilizes a global `storedLayers` array to maintain the state of loaded layers throughout the session.
-   *********************************************************************************/
-  function loadLayers() {
-    // Parse any locally stored layer objects
-    if (localStorage.WMEGeoLayers != undefined) {
-      console.log(`${scriptName}: Loading Saved Layers ...`);
-      toggleParsingMessage(true);
-      const delayDuration = 300;
-      setTimeout(() => {
+   * @returns {Promise} - Resolves when all operations are complete, whether successful or encountering errors in parts.
+   */
+  async function loadLayers() {
+    console.log(`${scriptName}: Loading Saved Layers...`);
 
-      storedLayers = JSON.parse(LZString.decompress(localStorage.WMEGeoLayers));
-      for (layerindex = 0; layerindex < storedLayers.length; ++layerindex) {
-        parseFile(storedLayers[layerindex]);
-      }
-    }, delayDuration);
-    } else {
-      storedLayers = [];
-    }
+    // Check local storage for any legacy layers
+    if (localStorage.WMEGeoLayers !== undefined) {
+    WazeWrap.Alerts.info( scriptName, "Old layers were found in local storage. These will be deleted. Please reload your files to convert them to IndexedDB storage.");
+    localStorage.removeItem("WMEGeoLayers");
+    console.log(`${scriptName}: Old layers in local storage have been deleted. Please reload your files.`);
+  }
+
+    // Continue by loading layers stored in IndexedDB
+    const transaction = db.transaction(["layers"], "readonly");
+    const store = transaction.objectStore("layers");
+    const request = store.getAll();
+
+    return new Promise((resolve, reject) => {
+      request.onsuccess = async function () {
+        const storedLayers = request.result || [];
+
+        if (storedLayers.length > 0) {
+          try {
+            toggleParsingMessage(true);
+
+            const layerPromises = storedLayers.map(async (storedLayer) => {
+              try {
+                const layer = await loadLayer(storedLayer.filename);
+                if (layer) {
+                  parseFile(layer);
+                }
+              } catch (error) {
+                console.error(`${scriptName}: Error processing layer:`, error);
+              }
+            });
+
+            await Promise.all(layerPromises);
+          } finally {
+            toggleParsingMessage(false);
+          }
+        } else {
+          console.log(`${scriptName}: No layers to load.`);
+        }
+
+        resolve();
+      };
+
+      request.onerror = function (event) {
+        console.error(`${scriptName}: Error loading layers from IndexedDB`, event.target.error);
+        reject(new Error("Failed to load layers from database"));
+      };
+    });
+  }
+
+  /**
+   * Fetches and decompresses a specified layer from the IndexedDB by its filename.
+   * This function handles the retrieval of a single layer, decompressing its data for subsequent usage.
+   *
+   * @param {string} filename - The name of the file representing the layer to be loaded.
+   *
+   * Workflow Details:
+   * 1. Initiates a read-only transaction with the IndexedDB to fetch layer data by the filename.
+   * 2. On successful retrieval:
+   *    a. Decompresses the stored data using LZString and parses it back to its original form.
+   *    b. Resolves the promise with the full decompressed data object.
+   * 3. If no data is found for the specified filename, resolves with `null`.
+   *
+   * Error Handling:
+   * - Logs errors to the console if data retrieval from the database fails.
+   * - Rejects the promise with an error if data fetching is unsuccessful.
+   *
+   * @returns {Promise<Object|null>} - Resolves with the decompressed layer object if successful, or `null` if not found.
+   */
+  async function loadLayer(filename) {
+    const transaction = db.transaction(["layers"], "readonly");
+    const store = transaction.objectStore("layers");
+    const request = store.get(filename);
+
+    return new Promise((resolve, reject) => {
+      request.onsuccess = function () {
+        const result = request.result;
+        if (result) {
+          // Decompress the entire stored object
+          const decompressedFileObj = JSON.parse(LZString.decompress(result.compressedData));
+          resolve(decompressedFileObj); // Return the full decompressed object
+        } else {
+          resolve(null);
+        }
+      };
+
+      request.onerror = function (event) {
+        console.error("Error retrieving layer:", event.target.error);
+        reject(new Error("Failed to fetch layer data"));
+      };
+    });
   }
 
   /*********************************************************************
@@ -208,7 +291,7 @@ var geometries = function () {
    * - Relies on global variables and elements such as `W.userscripts`, `W.map`, and custom functions like `addGeometryLayer`, `drawStateBoundary`, and `draw_WKT`.
    * - Incorporates CSS styling to maintain consistency with the WME environment and improve usability.
    *************************************************************************/
-  function init() {
+  async function init() {
     console.log(`${scriptName}: Loading User Interface ...`);
 
     wmeSDK.Sidebar.registerScriptTab().then(({ tabLabel, tabPane }) => {
@@ -216,7 +299,7 @@ var geometries = function () {
       tabLabel.title = `${scriptName}`;
 
       let geobox = document.createElement("div");
-      geobox.style.cssText = "padding: 10px; background-color: #fff; border: 2px solid #ddd; border-radius: 10px; box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);";
+      geobox.style.cssText = "padding: 5px; background-color: #fff; border: 2px solid #ddd; border-radius: 5px; box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);";
       tabPane.appendChild(geobox);
 
       let geotitle = document.createElement("div");
@@ -230,12 +313,16 @@ var geometries = function () {
       geobox.appendChild(geoversion);
 
       let hr = document.createElement("hr");
-      hr.style.cssText = "margin-top: 5px; margin-bottom: 5px; border: 0; border-top: 1px solid hsl(0, 0%, 93.5%);";
+      hr.style.cssText = "margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid hsl(0, 0%, 93.5%);";
       geobox.appendChild(hr);
 
       geolist = document.createElement("ul");
       geolist.style.cssText = "margin: 5px 0; padding: 5px;";
       geobox.appendChild(geolist);
+
+      let hr1 = document.createElement("hr");
+      hr1.style.cssText = "margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid hsl(0, 0%, 93.5%);";
+      geobox.appendChild(hr1);
 
       let geoform = document.createElement("form");
       geoform.style.cssText = "display: flex; flex-direction: column; gap: 0px;";
@@ -249,10 +336,10 @@ var geometries = function () {
       inputfile.type = "file";
       inputfile.id = "GeometryFile";
       inputfile.title = ".geojson, .gml or .wkt";
-      inputfile.style.cssText = "opacity: 0; position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: pointer; pointer-events: none;";
+      inputfile.style.cssText = "opacity: 0; position: absolute; top: 0; left: 0; width: 95%; height: 100%; cursor: pointer; pointer-events: none;";
       fileContainer.appendChild(inputfile);
 
-      let customLabel = createButton("Import GEO File", "#8BC34A", "#689F38", "label", "GeometryFile");
+      let customLabel = createButton("Import GEO File", "#8BC34A", "#689F38", "#FFFFFF", "label", "GeometryFile");
       fileContainer.appendChild(customLabel);
       geoform.appendChild(fileContainer);
 
@@ -269,18 +356,71 @@ var geometries = function () {
       notes.style.cssText = "color: #555; display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
       geoform.appendChild(notes);
 
-      let stateBoundaryButton = createButton("Draw State Boundary", "#87CEEB", "#4D9DD2", "input");
-      stateBoundaryButton.id = "stateBoundary_btn";
-      stateBoundaryButton.title = "Add boundary for Current Active State";
-      stateBoundaryButton.addEventListener("click", drawStateBoundary);
-      geoform.appendChild(stateBoundaryButton);
+      let hrElement0 = document.createElement("hr");
+      hrElement0.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid #ddd;";
+      geoform.appendChild(hrElement0);
 
-      let inputContainer = document.createElement("div");
-      inputContainer.style.cssText = "display: flex; flex-direction: column; gap: 5px; margin-top: 10px;";
+      let usCensusB = document.createElement("p");
+      usCensusB.innerHTML = `
+        <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_main.html" target="_blank" style="color: #555; text-decoration: underline;">
+          US Census Bureau:
+        </a></b>`;
+      usCensusB.style.cssText = "color: #555; display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
+      geoform.appendChild(usCensusB);
+
+      // State Boundary Button
+      const stateBoundaryInfoHtml = `
+      <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_geography_details.html#STATE" target="_blank" style="color: #555; text-decoration: underline;">
+      States:
+      </a></b><br>
+      States and Equivalent Entities that are the primary governmental divisions of the United States.
+      `;
+      const stateBoundaryButtonContainer = createButtonWithInfo("Draw State Boundary", "#E57373", "#D32F2F", "#FFFFFF", "button", stateBoundaryInfoHtml);
+      stateBoundaryButtonContainer.querySelector("button").addEventListener("click", (event) => {
+        event.preventDefault();
+        drawBoundary("state");
+      });
+      geoform.appendChild(stateBoundaryButtonContainer);
+
+      // County Boundary Button
+      const countyBoundaryInfoHtml = `
+      <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_geography_details.html#COUNTY" target="_blank" style="color: #555; text-decoration: underline;">
+      Counties:
+      </a></b><br>
+      In most states, primary legal divisions are called counties.<br>
+      LA uses parishes, while AK uses organized boroughs, cities and boroughs, municipalities, and census areas.<br>
+      MD, MO, NV, and VA have independent cities acting as primary divisions outside of counties.<br>
+      DC & GU are treated as single entities.<br>
+      CT by Planning Regions, RI & parts of MA, counties no longer function administratively but data is still provided for these areas.<br>
+      Municipios in PR, Districts & Islands in AS, Municipalities in MP, and Islands in VI.
+      `;
+      const countyBoundaryButtonContainer = createButtonWithInfo("Draw County Boundary", "#8BC34A", "#689F38", "#FFFFFF", "button", countyBoundaryInfoHtml);
+      countyBoundaryButtonContainer.querySelector("button").addEventListener("click", (event) => {
+        event.preventDefault();
+        drawBoundary("county");
+      });
+      geoform.appendChild(countyBoundaryButtonContainer);
+
+      // countySub Boundary Button
+      const countySubBoundaryInfoHtml = `
+      <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_geography_details.html#COUSUB" target="_blank" style="color: #555; text-decoration: underline;">
+      County Subdivisions:
+      </a></b><br>
+      County Subdivisions are primary divisions of counties and include legal and statistical entities such as minor civil divisions (MCDs), census county divisions (CCDs), census subareas, and unorganized territories (UTs).<br><br>
+    `;
+      const countySubBoundaryButtonContainer = createButtonWithInfo("Draw County Sub Boundary", "#42A5F5", "#1976D2", "#FFFFFF", "button", countySubBoundaryInfoHtml);
+      countySubBoundaryButtonContainer.querySelector("button").addEventListener("click", (event) => {
+        event.preventDefault();
+        drawBoundary("countysub");
+      });
+      geoform.appendChild(countySubBoundaryButtonContainer);
 
       let hrElement1 = document.createElement("hr");
       hrElement1.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid #ddd;";
-      inputContainer.appendChild(hrElement1);
+      geoform.appendChild(hrElement1);
+
+      let inputContainer = document.createElement("div");
+      inputContainer.style.cssText = "display: flex; flex-direction: column; gap: 5px; margin-top: 10px;";
 
       let colorFontSizeRow = document.createElement("div");
       colorFontSizeRow.style.cssText = "display: flex; justify-content: normal; align-items: center; gap: 0px;";
@@ -341,7 +481,7 @@ var geometries = function () {
       // Thumb styling via CSS pseudo-elements
       const styleElement = document.createElement("style");
       styleElement.textContent = `
-  input[type=range]::-webkit-slider-thumb {
+    input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 15px; /* Thumb width */
@@ -349,8 +489,8 @@ var geometries = function () {
     background: #808080; /* Thumb color */
     cursor: pointer; /* Switch cursor to pointer when hovering the thumb */
     border-radius: 50%;
-  }
-  input[type=range]::-moz-range-thumb {
+   }
+   input[type=range]::-moz-range-thumb {
     width: 15px;
     height: 15px;
     background: #808080;
@@ -364,7 +504,7 @@ var geometries = function () {
     cursor: pointer;
     border-radius: 50%;
   }
-`;
+  `;
 
       document.head.appendChild(styleElement);
 
@@ -647,7 +787,7 @@ var geometries = function () {
       input_WKT.id = "input_WKT";
       input_WKT.name = "input_WKT";
       input_WKT.placeholder = "POINT(X Y)  LINESTRING (X Y, X Y,...)  POLYGON(X Y, X Y, X Y,...) etc....";
-      input_WKT.style.cssText = `width: 100%; height: 10rem; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical;`;
+      input_WKT.style.cssText = `width: 100%; height: 10rem; min-height: 5rem; max-height: 40rem; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical;`;
       // Restrict resizing to vertical
       wktContainer.appendChild(input_WKT);
 
@@ -655,13 +795,13 @@ var geometries = function () {
       let buttonContainer = document.createElement("div");
       buttonContainer.style.cssText = `display: flex; gap: 45px;`;
 
-      let submit_WKT_btn = createButton("Import WKT", "#8BC34A", "#689F38", "input");
+      let submit_WKT_btn = createButton("Import WKT", "#8BC34A", "#689F38", "#FFFFFF", "input");
       submit_WKT_btn.id = "submit_WKT_btn";
       submit_WKT_btn.title = "Import WKT Geometry to WME Layer";
       submit_WKT_btn.addEventListener("click", draw_WKT);
       buttonContainer.appendChild(submit_WKT_btn);
 
-      let clear_WKT_btn = createButton("Clear WKT", "#E57373", "#D32F2F", "input");
+      let clear_WKT_btn = createButton("Clear WKT", "#E57373", "#D32F2F", "#FFFFFF", "input");
       clear_WKT_btn.id = "clear_WKT_btn";
       clear_WKT_btn.title = "Clear WKT Geometry Input and Name";
       clear_WKT_btn.addEventListener("click", clear_WKT_input);
@@ -718,54 +858,6 @@ var geometries = function () {
       debugToggleContainer.appendChild(debugToggleLabel);
       geoform.appendChild(debugToggleContainer);
 
-      // Add Toggle Button for useWmeSDK
-      let sdkToggleContainer = document.createElement("div");
-      sdkToggleContainer.style.cssText = `display: flex; align-items: center; margin-top: 10px;`;
-
-      let sdkToggleLabel = document.createElement("label");
-      sdkToggleLabel.style.cssText = `margin-left: 10px;`;
-
-      const updateSdkLabel = () => {
-        sdkToggleLabel.innerText = `wmeSDK ${useWmeSDK ? "ON" : "OFF"}`;
-      };
-
-      let sdkSwitchWrapper = document.createElement("label");
-      sdkSwitchWrapper.style.cssText = `position: relative; display: inline-block; width: 40px; height: 20px; border: 1px solid #ccc; border-radius: 20px;`;
-
-      let sdkToggleSwitch = document.createElement("input");
-      sdkToggleSwitch.type = "checkbox";
-      sdkToggleSwitch.style.cssText = `opacity: 0; width: 0; height: 0; `;
-
-      let sdkSwitchSlider = document.createElement("span");
-      sdkSwitchSlider.style.cssText = `position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px;`;
-
-      let sdkInnerSpan = document.createElement("span");
-      sdkInnerSpan.style.cssText = `position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;`;
-
-      sdkSwitchSlider.appendChild(sdkInnerSpan);
-
-      const updateSdkSwitchState = () => {
-        sdkSwitchSlider.style.backgroundColor = useWmeSDK ? "#8BC34A" : "#ccc";
-        sdkInnerSpan.style.transform = useWmeSDK ? "translateX(20px)" : "translateX(0)";
-      };
-
-      sdkToggleSwitch.checked = useWmeSDK;
-      updateSdkLabel();
-      updateSdkSwitchState();
-
-      sdkToggleSwitch.addEventListener("change", () => {
-        useWmeSDK = sdkToggleSwitch.checked;
-        updateSdkLabel();
-        updateSdkSwitchState();
-        console.log(`${scriptName}: wmeSDK is now ${useWmeSDK ? "enabled" : "disabled"}`);
-      });
-
-      sdkSwitchWrapper.appendChild(sdkToggleSwitch);
-      sdkSwitchWrapper.appendChild(sdkSwitchSlider);
-      sdkToggleContainer.appendChild(sdkSwitchWrapper);
-      sdkToggleContainer.appendChild(sdkToggleLabel);
-      geoform.appendChild(sdkToggleContainer);
-
       // Add Toggle Button for forceGeoJSON
       let geoJSONToggleContainer = document.createElement("div");
       geoJSONToggleContainer.style.cssText = `display: flex; align-items: center; margin-top: 10px;`;
@@ -819,43 +911,77 @@ var geometries = function () {
     });
 
     setupProjectionsAndTransforms();
-    loadLayers();
+
+    try {
+      await initDatabase();
+      console.log(`${scriptName}: IndexedDB initialized successfully!`);
+      // Now you can safely call functions that use the db
+      loadLayers();
+    } catch (error) {
+      console.error(`${scriptName}: Application Initialization Error:`, error);
+    }
   }
 
+  function initDatabase() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open("GeometryLayersDB", 1);
+
+      request.onupgradeneeded = function (event) {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains("layers")) {
+          db.createObjectStore("layers", { keyPath: "filename" });
+        }
+      };
+
+      request.onsuccess = function (event) {
+        db = event.target.result;
+        resolve();
+      };
+
+      request.onerror = function (event) {
+        console.error("Failed to open IndexedDB:", event.target.error);
+        reject(new Error("IndexedDB initialization failed"));
+      };
+    });
+  }
+
+  /**
+   * Initializes and registers coordinate reference systems (CRS) and their transformations in OpenLayers using Proj4.
+   * This setup enhances map accuracy and interoperability by ensuring a wide range of projections are available and correctly linked.
+   *
+   * Function details:
+   * 1. **Library Check**: Ensures that both OpenLayers and Proj4js libraries are available for use. Logs an error if any is missing.
+   *
+   * 2. **Projection Definition**:
+   *    - Lists proj4-compatible string definitions for numerous EPSG codes, covering global systems like WGS84 and national systems.
+   *    - Each EPSG code is associated with additional properties like `units` and `maxExtent`, which define the coordinate system's domain and measurement unit.
+   *
+   * 3. **UTM Zones Registration**:
+   *    - Automatically constructs and registers UTM zone projections for both the northern and southern hemispheres (EPSG:326xx and EPSG:327xx).
+   *
+   * 4. **Projection Registration**:
+   *    - Registers each defined projection in proj4 and OpenLayers to make them available for use within OpenLayers maps.
+   *    - Establishes transformation functions between each newly defined projection and base Web Mercator projections (EPSG:900913 and EPSG:3857).
+   *
+   * 5. **Debugging and Logging**:
+   *    - Provides extensive logging for debugging purposes, displaying registered projections and transformations if debugging is enabled.
+   *
+   * 6. **Projection Aliases**:
+   *    - Populates a `projectionMap` with common identifiers and their OpenLayers Projection objects to facilitate easy reference to projections by various aliases.
+   *
+   * 7. **Flexible Identifier Mapping**:
+   *    - Uses a template-based mechanism to generate and register multiple alias forms for each EPSG projection.
+   *
+   * Notes:
+   * - Provides a comprehensive base for geographic applications needing diverse coordinate system support.
+   * - Alerts or logs errors when prerequisites are unmet or issues arise during the setup.
+   *
+   * Ensure this function runs at initialization to make all defined projections and transformations instantly available across your mapping application.
+   */
   function setupProjectionsAndTransforms() {
-    /********************  Register missing transformations in OpenLayers using proj4!  *************************/
-    /********** Proj4-src.js version 2.15.0 predefines the following ******************************************
+    /********************  Register missing transformations in OpenLayers using proj4!  ************************
      * The `globals` function initializes commonly used coordinate reference system (CRS) definitions
      * using Proj4. These definitions include several standard EPSG codes, which are referenced globally.
-     *
-     * Here's a summary of the EPSG codes and their corresponding Proj4 definitions:
-     *
-     * - EPSG:4326
-     *   Title: WGS 84 (long/lat)
-     *   Definition: Global latitude/longitude coordinate system, using the WGS84 datum.
-     *   Proj4: +title=WGS 84 (long/lat) +proj=longlat +ellps=WGS84 +datum=WGS84 +units=degrees
-     *
-     * - EPSG:4269
-     *   Title: NAD83 (long/lat)
-     *   Definition: Similar to WGS84 but based on the North American Datum 1983.
-     *   Proj4: +title=NAD83 (long/lat) +proj=longlat +a=6378137.0 +b=6356752.31414036 +ellps=GRS80 +datum=NAD83 +units=degrees
-     *
-     * - EPSG:3857
-     *   Title: WGS 84 / Pseudo-Mercator
-     *   Definition: A projected coordinate system used by many web maps; sometimes called "Web Mercator."
-     *   Proj4: +title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs
-     *
-     * - UTM Zones (Worldwide):
-     *   These add Universal Transverse Mercator (UTM) zones for both the northern and southern hemispheres
-     *   using the WGS84 datum.
-     *   - EPSG:326xx for northern hemisphere zones 1-60 (e.g., EPSG:32601 for zone 1).
-     *   - EPSG:327xx for southern hemisphere zones 1-60 (e.g., EPSG:32701 for zone 1).
-     *   Definitions use the Proj4 format "+proj=utm +zone=<zone_number> +datum=WGS84 +units=m"
-     *
-     * - Additional Definitions:
-     *   - EPSG:3785 is maintained for backward compatibility; its official code is EPSG:3857.
-     *   - GOOGLE, EPSG:900913, EPSG:102113 all reference EPSG:3857 to support different aliases and ensure compatibility with older systems.
-     *
      * The function also sets global shortcuts for these systems, such as WGS84 referencing EPSG:4326.
      */
 
@@ -1064,6 +1190,7 @@ var geometries = function () {
    * - Utilizes global variables and functions such as `formats`, `storedLayers`, and `parseFile`.
    * - Relies on DOM elements and user inputs that need to be correctly set up in the environment for this function to work.
    *****************************************************************************/
+
   function draw_WKT() {
     // Retrieve style and layer options
     let color = document.getElementById("color").value;
@@ -1104,42 +1231,46 @@ var geometries = function () {
       // Create an instance of GeoWKTer
       const geoWKTer = new GeoWKTer();
       const wktString = geoWKTer.read(wktInput, layerName); // Parse WKT input to an internal representation
-      const geojsonData = geoWKTer.toGeoJSON(wktString); // Convert to GeoJSON using the toGeoJSON method
+      const geojson = geoWKTer.toGeoJSON(wktString); // Convert to GeoJSON using the toGeoJSON method
       // Store and add the GeoJSON layer
-      const geojson_layer = new layerStoreObj(geojsonData, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "${Name}", "WKT");
-      parseFile(geojson_layer);
+      const obj = new layerStoreObj(geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "${Name}", "WKT");
+      parseFile(obj);
     } catch (error) {
       console.error(`${scriptName}: Error processing WKT input`, error);
       WazeWrap.Alerts.error(scriptName, `Error processing WKT input. Please check your input format.\n${error.message}`);
     }
   }
 
-  /*******************************************************************************
-   * drawStateBoundary
+  // Clears the current contents of the textarea.
+  function clear_WKT_input() {
+    document.getElementById("input_WKT").value = "";
+    document.getElementById("input_WKT_name").value = "";
+  }
+
+  /**
+   * Draws the boundary of a geographical region (state, county, or CountySub) using ArcGIS data and user-defined
+   * formatting options. Retrieves and parses geographical data, applies specified styling, and checks for existing layers
+   * to prevent duplicating the visualization on the map. Alerts are shown for operations and error handling.
    *
-   * Description:
-   * This function draws the boundary of the currently selected state on the map, using specific styling options
-   * provided by the user. It checks for the existence of the state boundary data, ensures that it’s not already
-   * loaded, and then processes it into a geometrically styled layer.
+   * @param {string} item - A descriptor indicating the type of boundary to be drawn (e.g., "State", "County", "CountySub").
    *
-   * Parameters:
-   * - No direct parameters; relies on DOM elements and global objects for inputs and operations.
+   * Function workflow:
+   * 1. Collects styling options from HTML form elements, which include color, opacity, font size, line styles, and label positions.
+   * 2. Utilizes `getArcGISdata` to fetch the GeoJSON representation of the specified boundary.
+   * 3. Validates the fetched data to ensure features exist. If none are found, alerts the user.
+   * 4. Checks the map for existing boundary visualizations to avoid duplicating them.
+   * 5. If a valid and non-duplicate boundary is identified:
+   *    a. Constructs a new `layerStoreObj` using the fetched GeoJSON data and the user-defined styling options.
+   *    b. Calls `parseFile` to render the boundary onto the map.
+   * 6. Logs messages and displays alerts about the success of the operation, duplicate layers, and any data retrieval errors.
    *
-   * Behavior:
-   * - Extracts styling options from DOM input elements for color, opacity, font size, line style, and label position.
-   * - Checks if the state and its geometry data are available in the global WME (Waze Map Editor) model.
-   * - Verifies whether the state’s geometric boundary is already loaded on the map to prevent duplication.
-   * - Constructs a `layerStoreObj` with the state’s geometry data serialized to a GeoJSON format along with styling.
-   * - Calls `parseFile` to create and add the state boundary as a new map layer.
-   * - Updates localStorage with the compressed state geometry data, maintaining persistence across sessions.
-   *
-   * Notes:
-   * - Utilizes global variables such as `W.map`, `W.model`, and `storedLayers`, which must be pre-defined.
-   * - Provides user feedback through console logs and UI alerts, especially when the state data is unavailable or already loaded.
-   * - Debug logging is conditional based on the `debug` flag to assist in development and troubleshooting.
-   *****************************************************************************/
-  function drawStateBoundary() {
-    // add formating Options and locaal storage for WME refresh availability to Draw State Boundary functionality
+   * Error Handling:
+   * - Logs errors to the console and displays alerts for data retrieval issues from the GIS service.
+   * - Notifies the user if the retrieved data does not contain any features.
+   * - Alerts on attempts to render already loaded boundaries.
+   */
+  function drawBoundary(item) {
+    // Add formating options and local storage for WME refresh availability to Draw State Boundary functionality
     let color = document.getElementById("color").value;
     let fillOpacity = document.getElementById("fill_opacity").value;
     let fontsize = document.getElementById("font_size").value;
@@ -1148,51 +1279,38 @@ var geometries = function () {
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
-    // SDK Work: options for State level geometry?  Not availibe in wmeSDK.DataModel.States.getTopState())
-    if (!W.model.topState || !W.model.topState.attributes || !W.model.topState.attributes.geometry) {
-      if (debug) console.log(`${scriptName}: no state or geometry available, sorry!`);
-      WazeWrap.Alerts.info(scriptName, "No State or Geometry Available, Sorry!");
-      return;
-    }
-    // SDK Work: move to wmeSDK.DataModel.States.getTopState() when geometry can be found
-    let layerName = `(${W.model.topState.attributes.name})`.replace(/[^A-Za-z]/g, "");
-    if (debug) console.log(`${scriptName}: State or geometry is:`, layerName);
+    // Assuming that the state boundary is what you want to draw
+    getArcGISdata(item)
+      .then((geojson) => {
+        if (!geojson || !geojson.features || geojson.features.length === 0) {
+          console.log("Error: No features found.");
+          WazeWrap.Alerts.info(scriptName, "No State Boundary Available, Sorry!");
+          return;
+        }
 
-    // SDK Work: might not be needed if parsefile()-->createLayerWithLabel() handels duplacete layer names when adding new layers!
-    let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
-    for (let i = 0; i < layers.length; i++) {
-      if (layers[i].name == "Geometry: " + layerName) {
-        if (debug) console.log(`${scriptName}: current state already loaded`);
-        WazeWrap.Alerts.info(scriptName, "Current State Boundary already Loaded!");
-        return;
-      }
-    }
-    // SDK Work: options for State level geometry?  Not availibe in wmeSDK.DataModel.States.getTopState())
-    let state_geo = W.model.topState.attributes.geometry;
-    // Convert to GeoJSON
-    let state_geojson;
-    try {
-      state_geojson = {
-        type: "Feature",
-        geometry: state_geo,
-        properties: {
-          Name: layerName,
-        },
-      };
-    } catch (error) {
-      if (debug) console.error(`${scriptName}:  Error converting topState.attributes.geometry to GeoJSON`, error);
-      WazeWrap.Alerts.error(scriptName, "Error converting topState.attributes.geometry to GeoJSON");
-      return;
-    }
+        // Extract the first feature, assuming that's the desired state boundary for simplicity
+        const Feature = geojson.features[0];
+        const layerName = Feature.properties.NAME;
 
-    let state_obj = new layerStoreObj(state_geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "Name", "GEOJSON");
-    parseFile(state_obj);
-  }
+        // Check if the layer already exists
+        let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
+        for (let layer of layers) {
+          if (layer.name === "Geometry: " + layerName) {
+            if (debug) console.log(`${scriptName}: current ${item} already loaded`);
+            WazeWrap.Alerts.info(scriptName, `Current ${item} Boundary already Loaded!`);
+            return;
+          }
+        }
 
-  // Clears the current contents of the textarea.
-  function clear_WKT_input() {
-    document.getElementById("input_WKT").value = "";
-    document.getElementById("input_WKT_name").value = "";
+        // Create a new layer object
+        let obj = new layerStoreObj(geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "${NAME}", "GEOJSON");
+
+        parseFile(obj);
+      })
+      .catch((error) => {
+        console.error(`${scriptName}: Failed to retrieve ${item} boundary:`, error);
+        WazeWrap.Alerts.error(scriptName, `Failed to retrieve ${item} boundary.`);
+      });
   }
 
   /*************************************************************************
@@ -1248,25 +1366,24 @@ var geometries = function () {
             case "ZIP":
               if (debug) console.log(`${scriptName}: .ZIP shapefile file found, format not supported by OpenLayers v 2.13.1, converting to GEOJSON...`);
               if (debug) console.time(`${scriptName}: .ZIP shapefile conversion in`);
-            
+
               const geoSHPer = new GeoSHPer();
-            
+
               // Using an IIFE to handle the async operation with try/catch
               (async () => {
                 try {
                   toggleParsingMessage(true); // Show the parsing message at the start
-            
-                  // Ensure the operation is awaited
-                  await geoSHPer.read(e.target.result); 
-                  const geoJSON = geoSHPer.toGeoJSON();
-                  const geojsonWithoutZ = removeZCoordinates(geoJSON);
-            
-                  if (debug) console.timeEnd(`${scriptName}: .ZIP shapefile conversion in`);
-            
-                  const fileObj = new layerStoreObj(geojsonWithoutZ, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "SHP");
-            
-                  parseFile(fileObj);
 
+                  // Ensure the operation is awaited
+                  await geoSHPer.read(e.target.result);
+                  const geoJSON = geoSHPer.toGeoJSON();
+                  const geojsonWithoutZ = removeZCoordinates(geoJSON); // Current WME Open Layers 2.13.1 geoJSON parser does not support z and or M
+
+                  if (debug) console.timeEnd(`${scriptName}: .ZIP shapefile conversion in`);
+
+                  const fileObj = new layerStoreObj(geojsonWithoutZ, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "SHP");
+
+                  parseFile(fileObj);
                 } catch (error) {
                   toggleParsingMessage(false);
                   handleError("ZIP shapefile")(error);
@@ -1334,11 +1451,12 @@ var geometries = function () {
 
                   const geoKMLer = new GeoKMLer(); // Currently only extrancts X & Y, when updated for Z will need to add removeZCoordinates() on the output for OL 2.13.1 GeoJSON parser.
                   const kmlDoc = geoKMLer.read(e.target.result);
-                  const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc);
-
+                  const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
+                  const geojsonWithoutZ = removeZCoordinates(KMLtoGeoJSON); // Current WME Open Layers 2.13.1 geoJSON parser does not support z and or M
+                  
                   if (debug) console.timeEnd(`${scriptName}: .KML conversion in`);
 
-                  fileObj = new layerStoreObj(KMLtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                  fileObj = new layerStoreObj(geojsonWithoutZ, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
                 } else {
                   if (debug) console.log(`${scriptName}: .KML file found, forceGeoJSON is OFF.... passing to OpenLayers...`);
                   fileObj = new layerStoreObj(e.target.result, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
@@ -1352,7 +1470,6 @@ var geometries = function () {
               break;
 
             case "KMZ":
-
               if (debug) console.log(`${scriptName}: .KMZ file found, forceGeoJSON is ON.... converting to GEOJSON...`);
               if (debug) console.time(`${scriptName}: .KMZ conversion in`);
               // Initialize the GeoKMZer instance
@@ -1373,12 +1490,13 @@ var geometries = function () {
 
                       const geoKMLer = new GeoKMLer();
                       const kmlDoc = geoKMLer.read(content);
-                      const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc);
+                      const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
+                      const geojsonWithoutZ = removeZCoordinates(KMLtoGeoJSON); // Current WME Open Layers 2.13.1 geoJSON parser does not support z and or M
 
                       if (debug) console.timeEnd(`${scriptName}: .KMZ conversion in`);
 
                       // Create a layer store object for GeoJSON format
-                      fileObj = new layerStoreObj(KMLtoGeoJSON, color, "GEOJSON", uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "KMZ");
+                      fileObj = new layerStoreObj(geojsonWithoutZ, color, "GEOJSON", uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "KMZ");
                     } else {
                       // Create a layer store object for KML format
                       fileObj = new layerStoreObj(content, color, "KML", uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "KMZ");
@@ -1386,7 +1504,6 @@ var geometries = function () {
 
                     parseFile(fileObj);
                   });
-
                 } catch (error) {
                   toggleParsingMessage(false);
                   handleError("KMZ read operation")(error);
@@ -1488,10 +1605,6 @@ var geometries = function () {
    * - For files without a pre-defined label attribute, it offers an interface for user selection from the attributes.
    * - Constructs the vector layer, styles, and integrates it onto the map, managing labels based on user input or default settings.
    * - Updates the UI list items to reflect the status and details of loading the file.
-   *
-   * Notes:
-   * - Heavily relies on global context elements like `W.map` for projections and map management, and `geolist` for UI maintenance.
-   * - Provides detailed debug logs when the debug flag is active, aiding in troubleshooting and validating process steps.
    ***************************************************************************************/
   function parseFile(fileObj) {
     if (debug) console.log(`${scriptName}: parseFile(): called with input of:`, fileObj);
@@ -1523,7 +1636,7 @@ var geometries = function () {
     const projectionPattern =
       /("EPSG:\d{1,6}"|"CRS:\d{1,6}"|CRS\d{0,6}|CRS:\s*WGS84|WGS84|\bWGS\s84\b|\bCRS\s84\b|\bNAD\s83\b|NAD83|\bNAD\s27\b|NAD27|\bETRS\s89\b|ETRS89|"EPSG::\d{1,6}"|"urn:ogc:def:crs:EPSG::\d{1,6}"|"urn:ogc:def:crs:EPSG:\d{1,6}\.\d{1,6}:\d{1,6}"|"urn:ogc:def:crs:OGC:1\.3:[^"]*")/;
 
-    // Finds the first match in the input content. While it is possible for some geometry file types to have different projections per feature, this assumes all features share the same projection.
+    // Finds the first match in the input content. While it is possible for some geometry file types to have different projections per feature, this assumes all features have the same projection.
     const match = contentToTest.match(projectionPattern);
 
     if (match) {
@@ -1611,7 +1724,7 @@ var geometries = function () {
    * Configures and adds a new vector layer to the map, applying styling and dynamic labeling
    * based on attributes from the geographic features. This function manages the label style context,
    * constructs the layer, updates the UI with toggler controls, and stores the layer configuration
-   * in local storage to preserve its state across sessions.
+   * in IndexedDB storage to preserve its state across sessions.
    *
    * Parameters:
    * @param {Object} fileObj - Object containing metadata and styling options for the layer.
@@ -1632,15 +1745,15 @@ var geometries = function () {
    * - Defines layer styling using attributes from `fileObj` and assigns a context for dynamic label computation.
    * - Creates a new vector layer, sets its unique ID, and assigns a z-index for rendering order.
    * - Uses `OpenLayers.StyleMap` to apply the defined style and attaches provided features to the layer.
-   * - Prevents duplicate storage by checking existing layers, updating local storage only for new layers.
+   * - Prevents duplicate storage by checking existing layers, updating IndexedDB storage only for new layers.
    * - Registers the layer with a group toggler, providing UI controls for visibility management.
    * - Integrates the layer into the main map and manages additional elements like toggling and list updates.
    ******************************************************************************************/
-  function createLayerWithLabel(fileObj, features, externalProjection) {
+  async function createLayerWithLabel(fileObj, features, externalProjection) {
     toggleLoadingMessage(true); // Show the user a loading message!
 
     const delayDuration = 300;
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
         let labelContext = {
           formatLabel: function (feature) {
@@ -1726,24 +1839,12 @@ var geometries = function () {
         // Add the layer to the map before attempting storage
         W.map.addLayer(WME_Geometry);
 
-        // Check and store layers in localStorage
-        const existingLayer = storedLayers.find((layer) => layer.filename === fileObj.filename);
-
-        if (!existingLayer) {
-          storedLayers.push(fileObj);
-          try {
-            const compressedData = LZString.compress(JSON.stringify(storedLayers));
-            const compressedDataSize = new Blob([compressedData]).size / 1024; // Size in kilobytes
-            localStorage.WMEGeoLayers = compressedData;
-            console.info(`${scriptName}: Stored file - ${fileObj.filename} : ${compressedDataSize.toFixed(2)} kB in localStorage`);
-          } catch (error) {
-            const compressedData = LZString.compress(JSON.stringify(storedLayers));
-            const compressedDataSize = new Blob([compressedData]).size / 1024; // Calculate size in kilobytes for logging
-            console.error(`${scriptName}: Failed to store data in localStorage:`, error);
-            WazeWrap.Alerts.error("Storage Error", `Failed to store data (${compressedDataSize.toFixed(2)} kB). This is due to storage limits being exceeded.  Layer will not be saved :(`);
-          }
-        } else {
-          console.log(`${scriptName}: Skipping duplicate storage for file: ${fileObj.filename}`);
+        // Check and store layers in IndexedDB
+        try {
+          await storeLayer(fileObj);
+        } catch (error) {
+          console.error(`${scriptName}: Failed to store data in IndexedDB:`, error);
+          WazeWrap.Alerts.error("Storage Error", "Failed to store data. Ensure IndexedDB is not full and try again. Layer will not be saved.");
         }
 
         if (debug) console.log(`${scriptName}: New Layer ${fileObj.filename} Added`);
@@ -1751,6 +1852,76 @@ var geometries = function () {
         toggleLoadingMessage(false); // Turn off the loading message!
       }
     }, delayDuration);
+  }
+
+  /**
+   * storeLayer
+   *
+   * Asynchronously stores a given file object in an IndexedDB object store named "layers".
+   * If the file object is not already stored (determined by its filename), it will compress the object,
+   * calculate its size in kilobits and megabits, and then store it.
+   *
+   * @param {Object} fileObj - The file object to be stored, which must include a 'filename' property.
+   *
+   * The function operates as follows:
+   * 1. Checks whether the file identified by 'filename' already exists in the database.
+   * 2. If the file does not exist:
+   *    a. Compresses the entire file object using LZString compression.
+   *    b. Calculates the size of the compressed data in bits, kilobits, and megabits.
+   *    c. Stores the compressed data with its filename in IndexedDB.
+   *    d. Logs a message to the console with the size details.
+   * 3. If the file already exists, skips the storage process and logs a message.
+   *
+   * @returns {Promise} - Resolves when the file is successfully stored or skipped if it exists.
+   *                      Rejects with an error if an operation fails.
+   */
+  async function storeLayer(fileObj) {
+    const transaction = db.transaction(["layers"], "readwrite");
+    const store = transaction.objectStore("layers");
+
+    return new Promise((resolve, reject) => {
+      const request = store.get(fileObj.filename);
+
+      request.onsuccess = function () {
+        const existingLayer = request.result;
+
+        if (!existingLayer) {
+          // Compress the entire fileObj
+          const compressedData = LZString.compress(JSON.stringify(fileObj));
+
+          // Calculate size of compressed data
+          const byteSize = compressedData.length * 2; // Assuming 2 bytes per character
+          const bitSize = byteSize * 8;
+          const sizeInKilobits = bitSize / 1024;
+          const sizeInMegabits = bitSize / 1048576;
+
+          const compressedFileObj = {
+            filename: fileObj.filename, // Keep the filename uncompressed
+            compressedData,
+          };
+
+          const addRequest = store.add(compressedFileObj);
+
+          addRequest.onsuccess = function () {
+            console.log(`${scriptName}: Stored Compressed Data file - ${fileObj.filename}. Size: ${sizeInKilobits.toFixed(2)} Kb, ${sizeInMegabits.toFixed(3)} Mb`);
+            resolve();
+          };
+
+          addRequest.onerror = function (event) {
+            console.error(`${scriptName}: Failed to store data in IndexedDB`, event.target.error);
+            reject(new Error("Failed to store data"));
+          };
+        } else {
+          console.log(`${scriptName}: Skipping duplicate storage for file: ${fileObj.filename}`);
+          resolve();
+        }
+      };
+
+      request.onerror = function (event) {
+        console.error(`${scriptName}: Failed to retrieve data from IndexedDB`, event.target.error);
+        reject(new Error("Failed to retrieve data"));
+      };
+    });
   }
 
   function toggleLoadingMessage(show) {
@@ -1934,7 +2105,7 @@ var geometries = function () {
       let buttonsContainer = document.createElement("div");
       buttonsContainer.style.cssText = "margin-top: 10px; display: flex; justify-content: flex-end; width: 90%; margin-left: 5%; margin-right: 5%;";
 
-      let importButton = createButton("Import", "#8BC34A", "#689F38", "button");
+      let importButton = createButton("Import", "#8BC34A", "#689F38", "#FFFFFF", "button");
       importButton.onclick = () => {
         if (selectBox.value === "custom" && customLabelInput.value.trim() === "") {
           WazeWrap.Alerts.error(scriptName, "Please enter a custom label expression when selecting 'Custom Label'.");
@@ -1954,7 +2125,7 @@ var geometries = function () {
         resolve(resolvedValue);
       };
 
-      let cancelButton = createButton("Cancel", "#E57373", "#D32F2F", "button");
+      let cancelButton = createButton("Cancel", "#E57373", "#D32F2F", "#FFFFFF", "button");
       cancelButton.onclick = () => {
         document.body.removeChild(overlay);
         reject("Operation cancelled by the user");
@@ -2026,7 +2197,7 @@ var geometries = function () {
     geolist.appendChild(liObj);
   }
 
-  function createButton(text, color, mouseoverColor, type = "button", labelFor = "") {
+  function createButton(text, bgColor, mouseoverColor, textColor, type = "button", labelFor = "") {
     let element;
 
     if (type === "label") {
@@ -2045,9 +2216,9 @@ var geometries = function () {
       element.textContent = text;
     }
 
-    element.style.cssText = `padding: 8px 0; font-size: 1rem; border: 2px solid ${color}; border-radius: 20px; cursor: pointer; background-color: ${color}; color: white; 
+    element.style.cssText = `padding: 8px 0; font-size: 1rem; border: 2px solid ${bgColor}; border-radius: 20px; cursor: pointer; background-color: ${bgColor}; color: ${textColor}; 
     box-sizing: border-box; transition: background-color 0.3s, border-color 0.3s; font-weight: bold; text-align: center; display: flex; justify-content: center; align-items: center; 
-    width: 100%; margin-top: 3px; margin-left: 5px; margin-right: 5px;`;
+    width: 95%; margin-top: 3px; margin-left: 5px; margin-right: 5px;`;
 
     element.addEventListener("mouseover", function () {
       element.style.backgroundColor = mouseoverColor;
@@ -2055,11 +2226,48 @@ var geometries = function () {
     });
 
     element.addEventListener("mouseout", function () {
-      element.style.backgroundColor = color;
-      element.style.borderColor = color;
+      element.style.backgroundColor = bgColor;
+      element.style.borderColor = bgColor;
     });
 
     return element; // Assuming you need to return the created element
+  }
+
+  function createButtonWithInfo(text, bgColor, mouseoverColor, textColor, type, infoHtml) {
+    let buttonContainer = document.createElement("div");
+    buttonContainer.style.cssText = "position: relative; display: inline-block; margin: 5px;";
+
+    let button = createButton(text, bgColor, mouseoverColor, textColor, type);
+    //button.style.color = textColor;
+    buttonContainer.appendChild(button);
+
+    let tooltip = document.createElement("div");
+    tooltip.innerHTML = infoHtml;
+    tooltip.style.cssText = `
+    display: none;
+    position: absolute;
+    background-color: #f9f9f9;
+    border: 1px solid #ccc;
+    padding: 10px;
+    border-radius: 5px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    top: 100%; /* Below the button */
+    left: 0%; /* Center horizontally */
+    transform: translateX(-0%); /* Center the tooltip */
+    white-space: normal;
+    z-index: 1;
+    `;
+    buttonContainer.appendChild(tooltip);
+
+    // Show tooltip on hover
+    buttonContainer.addEventListener("mouseenter", () => {
+      tooltip.style.display = "block";
+    });
+    buttonContainer.addEventListener("mouseleave", () => {
+      tooltip.style.display = "none";
+    });
+
+    return buttonContainer;
   }
 
   /***************************************************************************
@@ -2083,7 +2291,7 @@ var geometries = function () {
    *   - Compresses and updates the storage entry with remaining layers if any exist.
    * - Logs the changes in local storage size.
    ****************************************************************************/
-  function removeGeometryLayer(filename) {
+  async function removeGeometryLayer(filename) {
     const layerName = `Geometry: ${filename}`;
     const layers = W.map.getLayersBy("layerGroup", "wme_geometry");
     const layerToDestroy = layers.find((layer) => layer.name === layerName);
@@ -2096,8 +2304,13 @@ var geometries = function () {
     // Destroy the layer
     layerToDestroy.destroy();
 
-    // Update storedLayers by filtering out the removed layer
-    storedLayers = storedLayers.filter((layer) => layer.filename !== filename);
+    // Asynchronously remove the layer from IndexedDB
+    try {
+      await removeLayerFromIndexedDB(filename);
+      console.log(`${scriptName}: Removed file - ${filename} from IndexedDB.`);
+    } catch (error) {
+      console.error(`${scriptName}: Failed to remove layer ${filename} from IndexedDB:`, error);
+    }
 
     // Sanitize filename and define IDs
     const listItemId = filename.replace(/[^a-z0-9_-]/gi, "_");
@@ -2109,29 +2322,43 @@ var geometries = function () {
       togglerItem.parentElement.removeChild(togglerItem);
     }
 
-    // Calculate initial storage size using Blob
-    const initialLocalStorageSize = localStorage.WMEGeoLayers ? new Blob([localStorage.WMEGeoLayers]).size / 1024 : 0;
-
-    // Update local storage based on the remaining layers
-    if (storedLayers.length === 0) {
-      localStorage.removeItem("WMEGeoLayers");
-      storedLayers = [];
-    } else {
-      const compressedData = LZString.compress(JSON.stringify(storedLayers));
-      localStorage.WMEGeoLayers = compressedData;
-    }
-
-    // Calculate new storage size using Blob
-    const newLocalStorageSize = localStorage.WMEGeoLayers ? new Blob([localStorage.WMEGeoLayers]).size / 1024 : 0;
-    const sizeChange = newLocalStorageSize - initialLocalStorageSize;
-
-    console.log(`${scriptName}: Removed file - ${filename}. Storage size changed by ${sizeChange.toFixed(2)} kB. Total size is now ${newLocalStorageSize.toFixed(2)} kB.`);
-
     // Remove any list item using the listItemId
     const listItem = document.getElementById(listItemId);
     if (listItem) {
       listItem.remove();
     }
+  }
+
+  // Function to remove a layer from IndexedDB
+  async function removeLayerFromIndexedDB(filename) {
+    if (!db) {
+      // Check if the database is initialized
+      console.error("Database not initialized");
+      return Promise.reject(new Error("Database not initialized"));
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(["layers"], "readwrite");
+      const store = transaction.objectStore("layers");
+      const request = store.delete(filename);
+
+      // Transaction-level error handling
+      transaction.onerror = function (event) {
+        console.error("Transaction error:", event.target.error);
+        reject(new Error("Transaction failed during deletion"));
+      };
+
+      // Request-specific success and error handling
+      request.onsuccess = function () {
+        console.log(`Layer with filename ${filename} successfully deleted`);
+        resolve();
+      };
+
+      request.onerror = function (event) {
+        console.error("Error deleting layer:", event.target.error);
+        reject(new Error("Failed to delete layer from database"));
+      };
+    });
   }
 
   /********************************************************************
@@ -2395,6 +2622,64 @@ var geometries = function () {
         },
       })),
     };
+  }
+
+  function getArcGISdata(dataType = "state") {
+    // Define URLs and field names for each data type
+    const CONFIG = {
+      state: {
+        url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/0",
+        outFields: "BASENAME,NAME,STATE",
+      },
+      county: {
+        url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/1",
+        outFields: "BASENAME,NAME,STATE",
+      },
+      countysub: {
+        url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer/1",
+        outFields: "BASENAME,NAME,STATE,COUNTY", // Example fields for County Subdivisions
+      },
+      // Add more configurations as needed
+    };
+
+    // Check if the dataType is valid
+    const config = CONFIG[dataType.toLowerCase()];
+    if (!config) {
+      throw new Error(`Invalid data type: ${dataType}`);
+    }
+
+    // Obtain the center of the map in WGS84 format.
+    const wgs84Center = wmeSDK.Map.getMapCenter(); // Get the current center coordinates of the WME map
+
+    // Create a geometry object from the map center.
+    const geometry = {
+      x: wgs84Center.lon,
+      y: wgs84Center.lat,
+      spatialReference: { wkid: 4326 },
+    };
+
+    const url = `${config.url}/query?geometry=${encodeURIComponent(JSON.stringify(geometry))}`;
+    const queryString = `${url}&outFields=${encodeURIComponent(config.outFields)}&returnGeometry=true&spatialRel=esriSpatialRelIntersects` + `&geometryType=esriGeometryPoint&inSR=${geometry.spatialReference.wkid}&outSR=3857&f=GeoJSON`;
+
+    if (debug) console.log(`${scriptName}: getGeoDataUrl(${dataType})`, queryString);
+
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        url: queryString,
+        method: "GET",
+        onload: function (response) {
+          try {
+            const jsonResponse = JSON.parse(response.responseText);
+            resolve(jsonResponse); // Resolve the promise with the JSON response
+          } catch (error) {
+            reject(new Error("Failed to parse JSON response: " + error.message));
+          }
+        },
+        onerror: function (error) {
+          reject(new Error("Request failed: " + error.statusText));
+        },
+      });
+    });
   }
 
   function testTransformations() {
