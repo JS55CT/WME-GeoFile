@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
-// @description         WME Geometries is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2025.04.26.01
+// @description         Import geometry files into Waze Map Editor. Supports GeoJSON, GML, WKT, KML, and GPX (Modified from original).
+// @version             2025.02.23.01
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -12,6 +12,11 @@
 // @exclude             https://www.waze.com/*user/*editor/*
 // @require             https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js
 // @require             https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/WKT.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/GML.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/GPX.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/KML.js
+// @require             https://cdnjs.cloudflare.com/ajax/libs/openlayers/2.13.1/lib/OpenLayers/Format/GeoJSON.js
 // @require             https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.15.0/proj4-src.js
 // @require             https://update.greasyfork.org/scripts/524747/1542062/GeoKMLer.js
 // @require             https://update.greasyfork.org/scripts/527113/1538395/GeoKMZer.js
@@ -37,8 +42,10 @@
 External Variables and Objects:
 GM_info: 
 unsafeWindow: 
+W: Represents the global Waze Map Editor object
 WazeWrap: external utility library for interacting with the Waze Map Editor environment.
 LZString: library used for compressing and decompressing strings.
+OpenLayers: A global object referring to the OpenLayers library
 proj4: Proj4-src.js version 2.15.0
 GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/functions used for parsing geospatial data formats.
 */
@@ -49,13 +56,32 @@ var geometries = function () {
   const scriptName = scriptMetadata.name;
   let geolist;
   let debug = false;
+  let forceGeoJSON = false; // Default to using OpenLayers Parser
   let formats;
   let formathelp;
+  let layerindex = 0;
+  let storedLayers = [];
   let db;
   let groupToggler;
   let projectionMap = {};
 
-  function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelattribute, orgFileext) {
+  // Get the map extent from the SDK
+  const geoPruner = new geoBBoxPruner(); // Create and reuse this instance
+
+  function layerStoreObj(
+    fileContent,
+    color,
+    fileext,
+    filename,
+    fillOpacity,
+    fontsize,
+    lineopacity,
+    linesize,
+    linestyle,
+    labelpos,
+    labelattribute,
+    orgFileext
+  ) {
     this.fileContent = fileContent;
     this.color = color;
     this.fileext = fileext;
@@ -91,10 +117,8 @@ var geometries = function () {
     Promise.all([isWmeReady(), isWazeWrapReady()])
       .then(() => {
         console.log(`${scriptName}: All dependencies are ready.`);
-        // Correctly initialize formats and formathelp using the function
-        const formatResults = createLayersFormats();
-        formats = formatResults.formats;
-        formathelp = formatResults.formathelp;
+        // Initialize formats and formathelp here
+        ({ formats, formathelp } = createLayersFormats());
         init();
       })
       .catch((error) => {
@@ -104,7 +128,14 @@ var geometries = function () {
 
   function isWmeReady() {
     return new Promise((resolve, reject) => {
-      if (wmeSDK && wmeSDK.State.isReady() && wmeSDK.Sidebar && wmeSDK.LayerSwitcher && wmeSDK.Shortcuts && wmeSDK.Events) {
+      if (
+        wmeSDK &&
+        wmeSDK.State.isReady() &&
+        wmeSDK.Sidebar &&
+        wmeSDK.LayerSwitcher &&
+        wmeSDK.Shortcuts &&
+        wmeSDK.Events
+      ) {
         resolve();
       } else {
         wmeSDK.Events.once({ eventName: "wme-ready" })
@@ -140,7 +171,7 @@ var geometries = function () {
     });
   }
 
-  /*********************************************************************
+  /**
    * loadLayers
    *
    * Loads all saved layers from the IndexedDB and processes each one asynchronously.
@@ -162,13 +193,16 @@ var geometries = function () {
    * - Catches and logs errors for each specific layer processing attempt to avoid interrupting the overall loading sequence.
    *
    * @returns {Promise} - Resolves when all operations are complete, whether successful or encountering errors in parts.
-   *************************************************************************/
+   */
   async function loadLayers() {
     console.log(`${scriptName}: Loading Saved Layers...`);
 
     // Check local storage for any legacy layers
     if (localStorage.WMEGeoLayers !== undefined) {
-      WazeWrap.Alerts.info(scriptName, "Old layers were found in local storage. These will be deleted. Please reload your files to convert them to IndexedDB storage.");
+      WazeWrap.Alerts.info(
+        scriptName,
+        "Old layers were found in local storage. These will be deleted. Please reload your files to convert them to IndexedDB storage."
+      );
       localStorage.removeItem("WMEGeoLayers");
       console.log(`${scriptName}: Old layers in local storage have been deleted. Please reload your files.`);
     }
@@ -215,7 +249,7 @@ var geometries = function () {
     });
   }
 
-  /*********************************************************************
+  /**
    * Fetches and decompresses a specified layer from the IndexedDB by its filename.
    * This function handles the retrieval of a single layer, decompressing its data for subsequent usage.
    *
@@ -233,7 +267,7 @@ var geometries = function () {
    * - Rejects the promise with an error if data fetching is unsuccessful.
    *
    * @returns {Promise<Object|null>} - Resolves with the decompressed layer object if successful, or `null` if not found.
-   *************************************************************************/
+   */
   async function loadLayer(filename) {
     const transaction = db.transaction(["layers"], "readonly");
     const store = transaction.objectStore("layers");
@@ -245,7 +279,7 @@ var geometries = function () {
         if (result) {
           // Decompress the entire stored object
           const decompressedFileObj = JSON.parse(LZString.decompress(result.compressedData));
-          resolve(decompressedFileObj);
+          resolve(decompressedFileObj); // Return the full decompressed object
         } else {
           resolve(null);
         }
@@ -277,7 +311,11 @@ var geometries = function () {
    * - Sets default styles and hover effects for UI components to enhance user experience.
    * - Displays information about available formats and coordinate systems to guide users in their inputs.
    * - Ensures that the existing layers are loaded upon initialization by calling a separate function, `loadLayers`.
+   * - Provides console logging to trace the steps and confirm successful loading of the UI, with debug messages when applicable.
    *
+   * Notes:
+   * - Relies on global variables and elements such as `W.userscripts`, `W.map`, and custom functions like `addGeometryLayer`, `drawStateBoundary`, and `draw_WKT`.
+   * - Incorporates CSS styling to maintain consistency with the WME environment and improve usability.
    *************************************************************************/
   async function init() {
     console.log(`${scriptName}: Loading User Interface ...`);
@@ -287,7 +325,8 @@ var geometries = function () {
       tabLabel.title = `${scriptName}`;
 
       let geobox = document.createElement("div");
-      geobox.style.cssText = "padding: 5px; background-color: #fff; border: 2px solid #ddd; border-radius: 5px; box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);";
+      geobox.style.cssText =
+        "padding: 5px; background-color: #fff; border: 2px solid #ddd; border-radius: 5px; box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);";
       tabPane.appendChild(geobox);
 
       let geotitle = document.createElement("div");
@@ -324,7 +363,8 @@ var geometries = function () {
       inputfile.type = "file";
       inputfile.id = "GeometryFile";
       inputfile.title = ".geojson, .gml or .wkt";
-      inputfile.style.cssText = "opacity: 0; position: absolute; top: 0; left: 0; width: 95%; height: 100%; cursor: pointer; pointer-events: none;";
+      inputfile.style.cssText =
+        "opacity: 0; position: absolute; top: 0; left: 0; width: 95%; height: 100%; cursor: pointer; pointer-events: none;";
       fileContainer.appendChild(inputfile);
 
       let customLabel = createButton("Import GEO File", "#8BC34A", "#689F38", "#FFFFFF", "label", "GeometryFile");
@@ -335,66 +375,71 @@ var geometries = function () {
 
       let notes = document.createElement("p");
       notes.innerHTML = `
-    <b>Formats:</b><br>
-    ${formathelp}<br>
-    <b>EPSG:</b> <br>
-    | 3035 | 3414 | 4214 | 4258 | 4267 | 4283 |<br>
-    | 4326 | 25832 | 26901->26923 | 27700 |<br>
-    | 32601->32660 | 32701->32760 |`;
+      <b>Formats:</b><br>
+      ${formathelp}<br>
+      <b>EPSG:</b> <br>
+      | 3035 | 3414 | 4214 | 4258 | 4267 | 4283 |<br>
+      | 4326 | 25832 | 26901->26923 | 27700 |<br>
+      | 32601->32660 | 32701->32760 |`;
       notes.style.cssText = "color: #555; display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
       geoform.appendChild(notes);
 
-      //ONLY LOAD THIS SECTION if TOP COUNTRY is the United State id = 235 */
-      const wmeTopContry = wmeSDK.DataModel.Countries.getTopCountry();
-      console.log(`${scriptName}: Top Level Coutry = ${wmeTopContry.name} | ${wmeTopContry.abbr}`);
+      let hrElement0 = document.createElement("hr");
+      hrElement0.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid #ddd;";
+      geoform.appendChild(hrElement0);
 
-      if ((wmeTopContry.abbr || "") === "US") {
-        let hrElement0 = document.createElement("hr");
-        hrElement0.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid #ddd;";
-        geoform.appendChild(hrElement0);
+      let usCensusB = document.createElement("p");
+      usCensusB.innerHTML = `
+          <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_main.html" target="_blank" style="color: #555; text-decoration: underline;">
+            US Census Bureau:
+          </a></b>`;
+      usCensusB.style.cssText = "color: #555; display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
+      geoform.appendChild(usCensusB);
 
-        let usCensusB = document.createElement("p");
-        usCensusB.innerHTML = `
-        <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_main.html" target="_blank" style="color: #555; text-decoration: underline;">
-          US Census Bureau:
-        </a></b>`;
-        usCensusB.style.cssText = "color: #555; display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
-        geoform.appendChild(usCensusB);
+      // State Boundary Button
+      const stateBoundaryButtonContainer = createButton(
+        "Draw State Boundary",
+        "#E57373",
+        "#D32F2F",
+        "#FFFFFF",
+        "input"
+      );
+      stateBoundaryButtonContainer.onclick = () => {
+        drawBoundary("state");
+      };
+      geoform.appendChild(stateBoundaryButtonContainer);
 
-        // State Boundary Button
-        const stateBoundaryButtonContainer = createButton("Draw State Boundary", "#E57373", "#D32F2F", "#FFFFFF", "input");
-        stateBoundaryButtonContainer.onclick = () => {
-          drawBoundary("state");
-        };
-        geoform.appendChild(stateBoundaryButtonContainer);
+      // County Boundary Button
+      const countyBoundaryButtonContainer = createButton(
+        "Draw County Boundary",
+        "#8BC34A",
+        "#689F38",
+        "#FFFFFF",
+        "input"
+      );
+      countyBoundaryButtonContainer.onclick = () => {
+        drawBoundary("county");
+      };
+      geoform.appendChild(countyBoundaryButtonContainer);
 
-        // County Boundary Button
-        const countyBoundaryButtonContainer = createButton("Draw County Boundary", "#8BC34A", "#689F38", "#FFFFFF", "input");
-        countyBoundaryButtonContainer.onclick = () => {
-          drawBoundary("county");
-        };
-        geoform.appendChild(countyBoundaryButtonContainer);
+      // countySub Boundary Button
+      const countySubBoundaryButtonContainer = createButton(
+        "Draw County Sub Boundary",
+        "#42A5F5",
+        "#1976D2",
+        "#FFFFFF",
+        "input"
+      );
+      countySubBoundaryButtonContainer.onclick = () => {
+        drawBoundary("countysub");
+      };
+      geoform.appendChild(countySubBoundaryButtonContainer);
 
-        // countySub Boundary Button
-        const countySubBoundaryButtonContainer = createButton("Draw County Sub Boundary", "#42A5F5", "#1976D2", "#FFFFFF", "input");
-        countySubBoundaryButtonContainer.onclick = () => {
-          drawBoundary("countysub");
-        };
-        geoform.appendChild(countySubBoundaryButtonContainer);
-
-        // ZipCode Boundary Button
-        const zipCodeBoundaryButtonContainer = createButton("Draw Zip Code Boundary", "#6F66D2", "#645CBD", "#FFFFFF", "input");
-        zipCodeBoundaryButtonContainer.onclick = () => {
-          drawBoundary("zipcode");
-        };
-        geoform.appendChild(zipCodeBoundaryButtonContainer);
-
-        const whatsInViewButtonContainer = createButton("Whats in View", "#BA68C8", "#9C27B0", "#FFFFFF", "input");
-        whatsInViewButtonContainer.onclick = () => {
-          whatsInView();
-        };
-        geoform.appendChild(whatsInViewButtonContainer);
-      } // END OF United State / US Census Bureau spacific inputs
+      const whatsInViewButtonContainer = createButton("Whats in View", "#BA68C8", "#9C27B0", "#FFFFFF", "input");
+      whatsInViewButtonContainer.onclick = () => {
+        whatsInView();
+      };
+      geoform.appendChild(whatsInViewButtonContainer);
 
       let hrElement1 = document.createElement("hr");
       hrElement1.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid #ddd;";
@@ -421,7 +466,8 @@ var geometries = function () {
       let input_font_size_label = document.createElement("label");
       input_font_size_label.setAttribute("for", "font_size");
       input_font_size_label.innerHTML = "Font Size: ";
-      input_font_size_label.style.cssText = "margin-left: 40px; font-weight: normal; flex-shrink: 0; margin-right: 5px;";
+      input_font_size_label.style.cssText =
+        "margin-left: 40px; font-weight: normal; flex-shrink: 0; margin-right: 5px;";
 
       let input_font_size = document.createElement("input");
       input_font_size.type = "number";
@@ -462,30 +508,30 @@ var geometries = function () {
       // Thumb styling via CSS pseudo-elements
       const styleElement = document.createElement("style");
       styleElement.textContent = `
-    input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 15px; /* Thumb width */
-    height: 15px; /* Thumb height */
-    background: #808080; /* Thumb color */
-    cursor: pointer; /* Switch cursor to pointer when hovering the thumb */
-    border-radius: 50%;
-   }
-   input[type=range]::-moz-range-thumb {
-    width: 15px;
-    height: 15px;
-    background: #808080;
-    cursor: pointer;
-    border-radius: 50%;
-  }
-  input[type=range]::-ms-thumb {
-    width: 15px;
-    height: 15px;
-    background: #808080;
-    cursor: pointer;
-    border-radius: 50%;
-  }
-  `;
+      input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 15px; /* Thumb width */
+      height: 15px; /* Thumb height */
+      background: #808080; /* Thumb color */
+      cursor: pointer; /* Switch cursor to pointer when hovering the thumb */
+      border-radius: 50%;
+     }
+     input[type=range]::-moz-range-thumb {
+      width: 15px;
+      height: 15px;
+      background: #808080;
+      cursor: pointer;
+      border-radius: 50%;
+    }
+    input[type=range]::-ms-thumb {
+      width: 15px;
+      height: 15px;
+      background: #808080;
+      cursor: pointer;
+      border-radius: 50%;
+    }
+    `;
 
       document.head.appendChild(styleElement);
 
@@ -493,7 +539,10 @@ var geometries = function () {
       let updateOpacityInputStyles = () => {
         let color = input_color.value;
         let opacityValue = input_fill_opacity.value;
-        let rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}, ${opacityValue})`;
+        let rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(
+          color.slice(5, 7),
+          16
+        )}, ${opacityValue})`;
 
         input_fill_opacity.style.backgroundColor = rgbaColor;
         input_fill_opacity.style.border = `2px solid ${color}`;
@@ -612,7 +661,10 @@ var geometries = function () {
       const updateLineOpacityInputStyles = () => {
         let color = input_color.value;
         let opacityValue = line_stroke_opacity.value;
-        let rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}, ${opacityValue})`;
+        let rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(
+          color.slice(5, 7),
+          16
+        )}, ${opacityValue})`;
         line_stroke_opacity.style.backgroundColor = rgbaColor;
         line_stroke_opacity.style.border = `2px solid ${color}`;
       };
@@ -746,7 +798,8 @@ var geometries = function () {
 
       // New label for the Text Area for WKT input section
       let wktSectionLabel = document.createElement("div");
-      wktSectionLabel.innerHTML = 'WKT Input: (<a href="https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry" target="_blank">WKT Format</a> )';
+      wktSectionLabel.innerHTML =
+        'WKT Input: (<a href="https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry" target="_blank">WKT Format</a> )';
       wktSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 5px; display: block;`;
       geoform.appendChild(wktSectionLabel);
 
@@ -839,27 +892,64 @@ var geometries = function () {
       debugToggleContainer.appendChild(debugToggleLabel);
       geoform.appendChild(debugToggleContainer);
 
+      // Add Toggle Button for forceGeoJSON
+      let geoJSONToggleContainer = document.createElement("div");
+      geoJSONToggleContainer.style.cssText = `display: flex; align-items: center; margin-top: 10px;`;
+
+      let geoJSONToggleLabel = document.createElement("label");
+      geoJSONToggleLabel.style.cssText = `margin-left: 10px;`;
+
+      const updateGeoJSONLabel = () => {
+        geoJSONToggleLabel.innerText = `Force GeoJSON Conversion ${forceGeoJSON ? "ON" : "OFF"}`;
+      };
+
+      let geoJSONSwitchWrapper = document.createElement("label");
+      geoJSONSwitchWrapper.style.cssText = `position: relative; display: inline-block; width: 40px; height: 20px; border: 1px solid #ccc; border-radius: 20px;`;
+
+      let geoJSONToggleSwitch = document.createElement("input");
+      geoJSONToggleSwitch.type = "checkbox";
+      geoJSONToggleSwitch.style.cssText = `opacity: 0; width: 0; height: 0;`;
+
+      let geoJSONSwitchSlider = document.createElement("span");
+      geoJSONSwitchSlider.style.cssText = `position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px;`;
+
+      let geoJSONInnerSpan = document.createElement("span");
+      geoJSONInnerSpan.style.cssText = `position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;`;
+
+      geoJSONSwitchSlider.appendChild(geoJSONInnerSpan);
+
+      const updateGeoJSONSwitchState = () => {
+        geoJSONSwitchSlider.style.backgroundColor = forceGeoJSON ? "#8BC34A" : "#ccc";
+        geoJSONInnerSpan.style.transform = forceGeoJSON ? "translateX(20px)" : "translateX(0)";
+      };
+
+      geoJSONToggleSwitch.checked = forceGeoJSON;
+      updateGeoJSONLabel();
+      updateGeoJSONSwitchState();
+
+      geoJSONToggleSwitch.addEventListener("change", () => {
+        forceGeoJSON = geoJSONToggleSwitch.checked;
+        updateGeoJSONLabel();
+        updateGeoJSONSwitchState();
+        console.log(`${scriptName}: Force GeoJSON Conversion is now ${forceGeoJSON ? "enabled" : "disabled"}`);
+        // Trigger map update or reparse data as needed
+      });
+
+      geoJSONSwitchWrapper.appendChild(geoJSONToggleSwitch);
+      geoJSONSwitchWrapper.appendChild(geoJSONSwitchSlider);
+      geoJSONToggleContainer.appendChild(geoJSONSwitchWrapper);
+      geoJSONToggleContainer.appendChild(geoJSONToggleLabel);
+      geoform.appendChild(geoJSONToggleContainer);
+
       console.log(`${scriptName}: User Interface Loaded!`);
     });
 
     setupProjectionsAndTransforms();
 
-    wmeSDK.Events.on({
-      eventName: "wme-map-move-end",
-      eventHandler: () => {
-        const whatsInView = document.getElementById("WMEGeowhatsInViewMessage");
-
-        if (whatsInView) {
-          // Call the update function to refresh the contents of the existing popup
-          updateWhatsInView(whatsInView);
-        }
-        // If the message does not exist, do nothing
-      },
-    });
-
     try {
-      await initDatabase(); // Now you can safely call functions that use the db
+      await initDatabase();
       console.log(`${scriptName}: IndexedDB initialized successfully!`);
+      // Now you can safely call functions that use the db
       loadLayers();
     } catch (error) {
       console.error(`${scriptName}: Application Initialization Error:`, error);
@@ -889,154 +979,272 @@ var geometries = function () {
     });
   }
 
-  /****************************************************************************************
- * setupProjectionsAndTransforms
- *
- * Initializes and registers coordinate reference systems (CRS) and their transformations
- * using the Proj4 library. Ensures a wide range of geographic projections are available 
- * for accurate map rendering and interoperability.
- *
- * Function Workflow:
- * 1. **Projection Definitions**:
- *    - Defines proj4-compatible string definitions for a variety of EPSG codes.
- *    - Each projection is associated with properties like `units` and `maxExtent`.
- *    - Includes global systems like WGS84 and a range of UTM zone projections.
-
- * 2. **Registration Process**:
- *    - Registers each projection definition with the proj4 library.
- *    - Projections are made available for use in geographic applications needing diverse CRS support.
-
- * 3. **Alias and Identifier Mapping**:
- *    - Creates a `projectionMap` linking common CRS identifiers to EPSG codes.
- *    - Utilizes template-based logic to generate multiple aliases for each projection, 
- *      simplifying reference and lookup across applications.
-
- * 4. **UTM Zones Configuration**:
- *    - Automatically constructs and registers UTM zone projections for both hemispheres 
- *      using a loop to cover EPSG:326xx and EPSG:327xx series.
-
- * 5. **Logging and Debugging**:
- *    - Provides comprehensive logging if debugging is enabled, listing registered projections
- *      and their detailed definitions for verification and troubleshooting.
-
- * Notes:
- * - Ensure this function runs at initialization to make all defined projections and transformations 
- *   instantly available across your mapping application.
- * - Alerts or logs errors if prerequisites are missing or issues arise during setup.
- ****************************************************************************************/
+  /**
+   * Initializes and registers coordinate reference systems (CRS) and their transformations in OpenLayers using Proj4.
+   * This setup enhances map accuracy and interoperability by ensuring a wide range of projections are available and correctly linked.
+   *
+   * Function details:
+   * 1. **Library Check**: Ensures that both OpenLayers and Proj4js libraries are available for use. Logs an error if any is missing.
+   *
+   * 2. **Projection Definition**:
+   *    - Lists proj4-compatible string definitions for numerous EPSG codes, covering global systems like WGS84 and national systems.
+   *    - Each EPSG code is associated with additional properties like `units` and `maxExtent`, which define the coordinate system's domain and measurement unit.
+   *
+   * 3. **UTM Zones Registration**:
+   *    - Automatically constructs and registers UTM zone projections for both the northern and southern hemispheres (EPSG:326xx and EPSG:327xx).
+   *
+   * 4. **Projection Registration**:
+   *    - Registers each defined projection in proj4 and OpenLayers to make them available for use within OpenLayers maps.
+   *    - Establishes transformation functions between each newly defined projection and base Web Mercator projections (EPSG:900913 and EPSG:3857).
+   *
+   * 5. **Debugging and Logging**:
+   *    - Provides extensive logging for debugging purposes, displaying registered projections and transformations if debugging is enabled.
+   *
+   * 6. **Projection Aliases**:
+   *    - Populates a `projectionMap` with common identifiers and their OpenLayers Projection objects to facilitate easy reference to projections by various aliases.
+   *
+   * 7. **Flexible Identifier Mapping**:
+   *    - Uses a template-based mechanism to generate and register multiple alias forms for each EPSG projection.
+   *
+   * Notes:
+   * - Provides a comprehensive base for geographic applications needing diverse coordinate system support.
+   * - Alerts or logs errors when prerequisites are unmet or issues arise during the setup.
+   *
+   * Ensure this function runs at initialization to make all defined projections and transformations instantly available across your mapping application.
+   */
   function setupProjectionsAndTransforms() {
+    /********************  Register missing transformations in OpenLayers using proj4!  ************************
+     * The `globals` function initializes commonly used coordinate reference system (CRS) definitions
+     * using Proj4. These definitions include several standard EPSG codes, which are referenced globally.
+     * The function also sets global shortcuts for these systems, such as WGS84 referencing EPSG:4326.
+     */
+
+    // Ensure Proj4js is loaded along with OpenLayers
+    if (typeof OpenLayers !== "undefined" && typeof proj4 !== "undefined") {
+      OpenLayers.Projection.prototype.proj4js = proj4;
+      console.log(`${scriptName}: OpenLayers and Proj4js are properly integrated.`);
+    } else {
+      console.error(`${scriptName}: Required libraries OpenLayers and/or Proj4js are not loaded.`);
+      return;
+    }
+
     // Define projection mappings with additional properties needed to create OpenLayers projections (units: , maxExtent: yx:)
     //definition: should be in proj4js format
     const projDefs = {
       "EPSG:4326": {
         definition: "+title=WGS 84 (long/lat) +proj=longlat +ellps=WGS84 +datum=WGS84 +units=degrees",
+        maxExtent: [-180, -90, 180, 90],
+        units: "degrees",
+        yx: true,
       },
       "EPSG:3857": {
-        definition: "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs",
+        definition:
+          "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs",
+        maxExtent: [-20037508.34, -20037508.34, 20037508.34, 20037508.34],
+        units: "m",
       },
       "EPSG:900913": {
-        definition: "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs",
+        definition:
+          "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs",
+        maxExtent: [-20037508.34, -20037508.34, 20037508.34, 20037508.34],
+        units: "m",
       },
       "EPSG:102100": {
-        definition: "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs",
+        definition:
+          "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs",
+        maxExtent: [-20037508.34, -20037508.34, 20037508.34, 20037508.34],
+        units: "m",
       },
       "EPSG:4269": {
-        definition: "+title=NAD83 (long/lat) +proj=longlat +a=6378137.0 +b=6356752.31414036 +ellps=GRS80 +datum=NAD83 +units=degrees",
+        definition:
+          "+title=NAD83 (long/lat) +proj=longlat +a=6378137.0 +b=6356752.31414036 +ellps=GRS80 +datum=NAD83 +units=degrees",
+        maxExtent: [-179.999, -4.999, 179.999, 49.999],
+        units: "degrees",
       },
       "EPSG:4267": {
         definition: "+title=NAD27 +proj=longlat +ellps=clrk66 +datum=NAD27 +no_defs",
+        maxExtent: [-179.999, -4.999, 179.999, 49.999],
+        units: "degrees",
       },
       "EPSG:3035": {
-        definition: "+title=ETRS89-extended / LAEA Europe +proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=ETRS89-extended / LAEA Europe +proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-4281778.7, 4351889.4, 1100517.0, 8509999.2],
+        units: "m",
       },
       "EPSG:4258": {
-        definition: "+title=ETRS89 (European Terrestrial Reference System 1989 +proj=longlat +ellps=GRS80 +no_defs +type=crs",
+        definition:
+          "+title=ETRS89 (European Terrestrial Reference System 1989 +proj=longlat +ellps=GRS80 +no_defs +type=crs",
+        maxExtent: [-16.1, 33.26, 38.01, 84.73],
+        units: "degrees",
       },
       "EPSG:25832": {
-        definition: "+title=ETRS89 / UTM zone 32N +proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=ETRS89 / UTM zone 32N +proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-1866822.47, 3680224.65, 3246120.36, 9483069.2],
+        units: "m",
       },
       "EPSG:27700": {
-        definition: "+title=OSGB36 / British National Grid +proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.060 +units=m +no_defs",
+        definition:
+          "+title=OSGB36 / British National Grid +proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.060 +units=m +no_defs",
+        maxExtent: [-68652.35, -16703.89, 652865.25, 3659.81],
+        units: "m",
       },
       "EPSG:4283": {
         definition: "+title=GDA94 / Geocentric Datum of Australia 1994 +proj=longlat +ellps=GRS80 +no_defs +type=crs",
+        maxExtent: [93.41, -60.55, 173.34, -8.47],
+        units: "degrees",
       },
       "EPSG:4214": {
-        definition: "+title=Beijing 1954 +proj=longlat +ellps=krass +towgs84=15.8,-154.4,-82.3,0,0,0,0 +no_defs +type=crs",
+        definition:
+          "+title=Beijing 1954 +proj=longlat +ellps=krass +towgs84=15.8,-154.4,-82.3,0,0,0,0 +no_defs +type=crs",
+        maxExtent: [73.62, 16.7, 134.77, 53.56],
+        units: "degrees",
       },
       "EPSG:3414": {
         definition:
           "+title=SVY21 / Singapore TM +proj=tmerc +lat_0=1.36666666666667 +lon_0=103.833333333333 +k=1 +x_0=28001.642 +y_0=38744.572 +ellps=WGS84 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [919.05, 12575.2, 54342.24, 5012.13],
+        units: "m",
       },
       // NAD 83 and by Zone
       "EPSG:26901": {
-        definition: "+title=NAD83 / UTM zone 1N +proj=utm +zone=1 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 1N +proj=utm +zone=1 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-236664.12, 5683214.12, 1346321.23, 6089777.96],
+        units: "m",
       },
       "EPSG:26902": {
-        definition: "+title=NAD83 / UTM zone 2N +proj=utm +zone=2 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 2N +proj=utm +zone=2 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [343123.02, 2634042.41, 10385020.37, 15684396.61],
+        units: "m",
       },
       "EPSG:26903": {
-        definition: "+title=NAD83 / UTM zone 3N +proj=utm +zone=3 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 3N +proj=utm +zone=3 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-269529.98, 2634442.81, 10381806.16, 15110676.33],
+        units: "m",
       },
       "EPSG:26904": {
-        definition: "+title=NAD83 / UTM zone 4N +proj=utm +zone=4 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 4N +proj=utm +zone=4 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-887933.72, 2634920.25, 10377477.4, 14363875.02],
+        units: "m",
       },
       "EPSG:26905": {
-        definition: "+title=NAD83 / UTM zone 5N +proj=utm +zone=5 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 5N +proj=utm +zone=5 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-1516761.97, 2635474.79, 10372038.07, 13402280.66],
+        units: "m",
       },
       "EPSG:26906": {
-        definition: "+title=NAD83 / UTM zone 6N +proj=utm +zone=6 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 6N +proj=utm +zone=6 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-2160832.29, 2636054.6, 10365493.19, 12204094.4],
+        units: "m",
       },
       "EPSG:26907": {
-        definition: "+title=NAD83 / UTM zone 7N +proj=utm +zone=7 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 7N +proj=utm +zone=7 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-2825105.32, 2635428.89, 10357848.76, 10804497.54],
+        units: "m",
       },
       "EPSG:26908": {
-        definition: "+title=NAD83 / UTM zone 8N +proj=utm +zone=8 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 8N +proj=utm +zone=8 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-3514571.4, 2634880.35, 10349111.76, 9979047.26],
+        units: "m",
       },
       "EPSG:26909": {
-        definition: "+title=NAD83 / UTM zone 9N +proj=utm +zone=9 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 9N +proj=utm +zone=9 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-4233900.32, 2634408.91, 10009187.77, 9937834.11],
+        units: "m",
       },
       "EPSG:26910": {
-        definition: "+title=NAD83 / UTM zone 10N +proj=utm +zone=10 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 10N +proj=utm +zone=10 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-4986601.04, 2634014.5, 9400376.54, 9897284.61],
+        units: "m",
       },
       "EPSG:26911": {
-        definition: "+title=NAD83 / UTM zone 11N +proj=utm +zone=11 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 11N +proj=utm +zone=11 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-5773188.31, 2633697.07, 8640663.91, 9857845.83],
+        units: "m",
       },
       "EPSG:26912": {
-        definition: "+title=NAD83 / UTM zone 12N +proj=utm +zone=12 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 12N +proj=utm +zone=12 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-6587424.26, 2633456.58, 7823629.61, 9819951.93],
+        units: "m",
       },
       "EPSG:26913": {
-        definition: "+title=NAD83 / UTM zone 13N +proj=utm +zone=13 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 13N +proj=utm +zone=13 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-7409211.34, 2633293.0, 7004315.28, 9846806.33],
+        units: "m",
       },
       "EPSG:26914": {
-        definition: "+title=NAD83 / UTM zone 14N +proj=utm +zone=14 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 14N +proj=utm +zone=14 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-8193186.78, 2633206.3, 6208726.29, 9885845.94],
+        units: "m",
       },
       "EPSG:26915": {
-        definition: "+title=NAD83 / UTM zone 15N +proj=utm +zone=15 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 15N +proj=utm +zone=15 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-8856933.09, 2633196.48, 5446161.06, 9926122.27],
+        units: "m",
       },
       "EPSG:26916": {
-        definition: "+title=NAD83 / UTM zone 16N +proj=utm +zone=16 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 16N +proj=utm +zone=16 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-9285588.45, 2633263.53, 4717539.4, 9967191.44],
+        units: "m",
       },
       "EPSG:26917": {
-        definition: "+title=NAD83 / UTM zone 17N +proj=utm +zone=17 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 17N +proj=utm +zone=17 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-9375787.46, 2633407.46, 4019960.94, 10380625.27],
+        units: "m",
       },
       "EPSG:26918": {
-        definition: "+title=NAD83 / UTM zone 18N +proj=utm +zone=18 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 18N +proj=utm +zone=18 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-9369979.01, 2633628.29, 3348971.56, 11819889.87],
+        units: "m",
       },
       "EPSG:26919": {
-        definition: "+title=NAD83 / UTM zone 19N +proj=utm +zone=19 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 19N +proj=utm +zone=19 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-9363066.9, 2633926.06, 2699621.82, 13082867.02],
+        units: "m",
       },
       "EPSG:26920": {
-        definition: "+title=NAD83 / UTM zone 20N +proj=utm +zone=20 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 20N +proj=utm +zone=20 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-9355057.45, 2634300.79, 2066923.68, 14111784.79],
+        units: "m",
       },
       "EPSG:26921": {
-        definition: "+title=NAD83 / UTM zone 21N +proj=utm +zone=21 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 21N +proj=utm +zone=21 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-9346704.62, 2634752.54, 1446015.08, 14916202.24],
+        units: "m",
       },
       "EPSG:26922": {
-        definition: "+title=NAD83 / UTM zone 22N +proj=utm +zone=22 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 22N +proj=utm +zone=22 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-9355719.6, 2635281.37, 832184.74, 15535142.11],
+        units: "m",
       },
       "EPSG:26923": {
-        definition: "+title=NAD83 / UTM zone 23N +proj=utm +zone=23 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        definition:
+          "+title=NAD83 / UTM zone 23N +proj=utm +zone=23 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+        maxExtent: [-9363643.95, 2635887.35, 481118.3, 16010435.63],
+        units: "m",
       },
     };
 
@@ -1044,58 +1252,99 @@ var geometries = function () {
     for (let zone = 1; zone <= 60; zone++) {
       projDefs[`EPSG:${32600 + zone}`] = {
         definition: `+proj=utm +zone=${zone} +datum=WGS84 +units=m +no_defs`,
+        units: "m",
+        maxExtent: [166021.44, 0, 833978.56, 9329005.18],
       };
       projDefs[`EPSG:${32700 + zone}`] = {
         definition: `+proj=utm +zone=${zone} +south +datum=WGS84 +units=m +no_defs`,
+        units: "m",
+        maxExtent: [166021.44, 1116915.04, 833978.56, 10000000.0],
       };
     }
 
-    // Register the projections in proj4.defs
-    for (const [epsg, { definition }] of Object.entries(projDefs)) {
-      proj4.defs(epsg, definition);
+    // Register the projections manually
+    for (const [epsg, { definition, units, maxExtent, yx }] of Object.entries(projDefs)) {
+      proj4.defs(epsg, definition); // Register each one with proj4
+      OpenLayers.Projection.defaults[epsg] = { units, maxExtent, yx }; // Add each one to the list of defult avalaible projections in open layers
     }
 
-    // Logging the # of registered proj4 definitions
+    // Function to add only the necessary transformation from UTM to supported formats
+    function addProjTransform(fromEPSG, toEPSG) {
+      OpenLayers.Projection.addTransform(fromEPSG, toEPSG, function (point) {
+        const transformedPoint = proj4(fromEPSG, toEPSG, [point.x, point.y]);
+        point.x = transformedPoint[0];
+        point.y = transformedPoint[1];
+        return point;
+      });
+    }
+
+    // Base internal projections EPSGs for WME to transform to
+    const baseEPSGs = ["EPSG:900913", "EPSG:3857"];
+
+    // Dynamically prepare a list from all defined projection keys
+    const allEPSGs = Object.keys(projDefs);
+
+    // Register transformations for all defined EPSGs in open layers
+    for (const srcEPSG of allEPSGs) {
+      for (const tgtEPSG of baseEPSGs) {
+        addProjTransform(srcEPSG, tgtEPSG);
+      }
+    }
+
+    // Optional debugging information
     if (debug) {
-      const defsCount = Object.entries(proj4.defs).length;
-      console.log(`${scriptName}: Number of proj4 definitions registered: ${defsCount}`);
+      console.log(`${scriptName}: OpenLayers.Projection.defaults:`, OpenLayers.Projection.defaults);
+
+      const definedProjections = {};
+      Object.keys(proj4.defs).forEach((code) => {
+        try {
+          const definition = proj4.defs(code);
+          definedProjections[code] = definition;
+        } catch (error) {
+          console.warn(`${scriptName}: Could not retrieve definition for ${code}: ${error.message}`);
+        }
+      });
+
+      if (debug) console.log(`${scriptName}: OpenLayers.Projection.transforms:`, OpenLayers.Projection.transforms);
+      if (debug) testTransformations();
     }
 
+    // Create a mapping of common EPSG codes and common aliases to their OpenLayers Projection objects
     projectionMap = {
-      // WGS84 common aliases, same as EPSG:4326
-      CRS84: "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS84": "EPSG:4326",
-      WGS84: "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:WGS84": "EPSG:4326",
-      "WGS 84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:WGS_84": "EPSG:4326",
-      "CRS WGS84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS_WGS84": "EPSG:4326",
-      "CRS:WGS84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS:WGS84": "EPSG:4326",
-      "CRS::WGS84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS::WGS84": "EPSG:4326",
-      "CRS:84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS:84": "EPSG:4326",
-      "CRS::84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS::84": "EPSG:4326",
-      "CRS 84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS_84": "EPSG:4326",
-      // NAD83 common aliases, same as EPSG:4269
-      "NAD 83": "EPSG:4269",
-      "urn:ogc:def:crs:OGC:1.3:NAD_83": "EPSG:4269",
-      NAD83: "EPSG:4269",
-      "urn:ogc:def:crs:OGC:1.3:NAD83": "EPSG:4269",
-      // ETRS89 / LAEA Europe common aliases, same as EPSG:3035
-      "ETRS 89": "EPSG:3035",
-      "urn:ogc:def:crs:OGC:1.3:ETRS_89": "EPSG:3035",
-      ETRS89: "EPSG:3035",
-      "urn:ogc:def:crs:OGC:1.3:ETRS89": "EPSG:3035",
-      // NAD27 common aliases, same as EPSG:4267
-      "NAD 27": "EPSG:4267",
-      "urn:ogc:def:crs:OGC:1.3:NAD_27": "EPSG:4267",
-      NAD27: "EPSG:4267",
-      "urn:ogc:def:crs:OGC:1.3:NAD27": "EPSG:4267",
+      // WGS84 common aliases, same as ESPG:4326
+      CRS84: new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS84": new OpenLayers.Projection("EPSG:4326"),
+      WGS84: new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "WGS 84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:WGS_84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS_WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS:WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS:WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS::WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS::WGS84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS:84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS:84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS::84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS::84": new OpenLayers.Projection("EPSG:4326"),
+      "CRS 84": new OpenLayers.Projection("EPSG:4326"),
+      "urn:ogc:def:crs:OGC:1.3:CRS_84": new OpenLayers.Projection("EPSG:4326"),
+      // ESPG:4269 NAD 83 common aliases
+      "NAD 83": new OpenLayers.Projection("EPSG:4269"),
+      "urn:ogc:def:crs:OGC:1.3:NAD_83": new OpenLayers.Projection("EPSG:4269"),
+      NAD83: new OpenLayers.Projection("EPSG:4269"),
+      "urn:ogc:def:crs:OGC:1.3:NAD83": new OpenLayers.Projection("EPSG:4269"),
+      //ESPG:3035  ETRS89 / LAEA Europe and it's common aliases
+      "ETRS 89": new OpenLayers.Projection("EPSG:3035"),
+      "urn:ogc:def:crs:OGC:1.3:ETRS_89": new OpenLayers.Projection("EPSG:3035"),
+      ETRS89: new OpenLayers.Projection("EPSG:3035"),
+      "urn:ogc:def:crs:OGC:1.3:ETRS89": new OpenLayers.Projection("EPSG:3035"),
+      //ESPG:4267  ETRS89 / LAEA Europe common aliases
+      "NAD 27": new OpenLayers.Projection("EPSG:4267"),
+      "urn:ogc:def:crs:OGC:1.3:NAD_27": new OpenLayers.Projection("EPSG:4267"),
+      NAD27: new OpenLayers.Projection("EPSG:4267"),
+      "urn:ogc:def:crs:OGC:1.3:NAD27": new OpenLayers.Projection("EPSG:4267"),
     };
 
     const identifierTemplates = [
@@ -1117,10 +1366,12 @@ var geometries = function () {
 
     // Extract EPSG codes from the projDefs object
     const epsgCodes = Object.keys(projDefs).map((key) => key.split(":")[1]);
+
+    // Use a loop to populate the projectionMap object
     epsgCodes.forEach((code) => {
       identifierTemplates.forEach((template) => {
         const identifier = template.replace("{{code}}", code);
-        projectionMap[identifier] = `EPSG:${code}`;
+        projectionMap[identifier] = new OpenLayers.Projection(`EPSG:${code}`);
       });
     });
 
@@ -1151,6 +1402,7 @@ var geometries = function () {
    * - Utilizes global variables and functions such as `formats`, `storedLayers`, and `parseFile`.
    * - Relies on DOM elements and user inputs that need to be correctly set up in the environment for this function to work.
    *****************************************************************************/
+
   function draw_WKT() {
     // Retrieve style and layer options
     let color = document.getElementById("color").value;
@@ -1160,7 +1412,9 @@ var geometries = function () {
     let linesize = document.getElementById("line_size").value;
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     let layerName = document.getElementById("input_WKT_name").value.trim();
-    let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
+    let labelpos =
+      document.querySelector('input[name="label_pos_horizontal"]:checked').value +
+      document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
     // Check for empty layer name
     if (!layerName) {
@@ -1169,27 +1423,12 @@ var geometries = function () {
       return;
     }
 
-    // Attempt to check if the layer already exists using SDK
-    const layerID = layerName.replace(/[^a-z0-9_-]/gi, "_");
-
-    try {
-      // Try setting the visibility of the layer to check existence
-      wmeSDK.Map.setLayerVisibility({
-        layerName: layerID,
-        visibility: true,
-      });
-
-      // If this succeeds, the layer already exists
-      if (debug) console.error(`${scriptName}: Current layer name "${layerName}" already used!`);
-      WazeWrap.Alerts.error(scriptName, `Current layer name "${layerName} " already used!`);
-      return;
-    } catch (error) {
-      if (error.name === "InvalidStateError") {
-        // Layer does not exist: it's safe to proceed further
-        if (debug) console.log(`${scriptName}: Layer name ${layerName} does not exist, proceeding to parse file.`);
-      } else {
-        console.error(`${scriptName}: Error checking layer existence`, error);
-        WazeWrap.Alerts.error(scriptName, `Error checking layer existence.\n${error.message}`);
+    // Check for duplicate layer name
+    let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
+    for (let i = 0; i < layers.length; i++) {
+      if (layers[i].name === "Geometry: " + layerName) {
+        if (debug) console.error(`${scriptName}: Current WKT layer name already used`);
+        WazeWrap.Alerts.error(scriptName, "Current layer name already used!");
         return;
       }
     }
@@ -1205,15 +1444,30 @@ var geometries = function () {
     try {
       // Create an instance of GeoWKTer
       const geoWKTer = new GeoWKTer();
-      const wktString = geoWKTer.read(wktInput, layerName);
-      const geojson = geoWKTer.toGeoJSON(wktString); // Convert to GeoJSON
-
-      // Prepare the layer object and invoke parseFile, which handles layer creation
-      const obj = new layerStoreObj(geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "${Name}", "WKT");
+      const wktString = geoWKTer.read(wktInput, layerName); // Parse WKT input to an internal representation
+      const geojson = geoWKTer.toGeoJSON(wktString); // Convert to GeoJSON using the toGeoJSON method
+      // Store and add the GeoJSON layer
+      const obj = new layerStoreObj(
+        geojson,
+        color,
+        "GEOJSON",
+        layerName,
+        fillOpacity,
+        fontsize,
+        lineopacity,
+        linesize,
+        linestyle,
+        labelpos,
+        "${Name}",
+        "WKT"
+      );
       parseFile(obj);
     } catch (error) {
       console.error(`${scriptName}: Error processing WKT input`, error);
-      WazeWrap.Alerts.error(scriptName, `Error processing WKT input. Please check your input format.\n${error.message}`);
+      WazeWrap.Alerts.error(
+        scriptName,
+        `Error processing WKT input. Please check your input format.\n${error.message}`
+      );
     }
   }
 
@@ -1223,7 +1477,7 @@ var geometries = function () {
     document.getElementById("input_WKT_name").value = "";
   }
 
-  /****************************************************************************
+  /**
    * Draws the boundary of a geographical region (state, county, or CountySub) using ArcGIS data and user-defined
    * formatting options. Retrieves and parses geographical data, applies specified styling, and checks for existing layers
    * to prevent duplicating the visualization on the map. Alerts are shown for operations and error handling.
@@ -1244,61 +1498,58 @@ var geometries = function () {
    * - Logs errors to the console and displays alerts for data retrieval issues from the GIS service.
    * - Notifies the user if the retrieved data does not contain any features.
    * - Alerts on attempts to render already loaded boundaries.
-   *****************************************************************************/
+   */
   function drawBoundary(item) {
-    if (debug) console.log(`drawBoundary called with item: ${item}`);
-    // Retrieve styling options
+    // Add formating options and local storage for WME refresh availability to Draw State Boundary functionality
     let color = document.getElementById("color").value;
     let fillOpacity = document.getElementById("fill_opacity").value;
     let fontsize = document.getElementById("font_size").value;
     let lineopacity = document.getElementById("line_stroke_opacity").value;
     let linesize = document.getElementById("line_size").value;
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
-    let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
+    let labelpos =
+      document.querySelector('input[name="label_pos_horizontal"]:checked').value +
+      document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
-    // Get boundary geoJSON from is US Census Bureau
+    // Assuming that the state boundary is what you want to draw
     getArcGISdata(item)
       .then((geojson) => {
         if (!geojson || !geojson.features || geojson.features.length === 0) {
-          console.log(`No ${item} Boundary Available, Sorry!`);
-          WazeWrap.Alerts.info(scriptName, `No ${item} Boundary Available, Sorry!`);
+          console.log("Error: No features found.");
+          WazeWrap.Alerts.info(scriptName, "No State Boundary Available, Sorry!");
           return;
         }
+
         // Extract the first feature, assuming that's the desired state boundary for simplicity
         const Feature = geojson.features[0];
-        let layerName;
+        const layerName = Feature.properties.NAME;
 
-        if (item === "zipcode") {
-          layerName = `ZIP CODE: ${Feature.properties.BASENAME}`;
-        } else {
-          layerName = Feature.properties.NAME;
-        }
-        const layerID = layerName.replace(/[^a-z0-9_-]/gi, "_");
-
-        try {
-          // Attempt to set the visibility of the layer using the SDK to check if it exists
-          wmeSDK.Map.setLayerVisibility({
-            layerName: layerID,
-            visibility: true,
-          });
-
-          // If successful, the layer already exists
-          if (debug) console.log(`${scriptName}: current ${item} "${layerName}" boundary already loaded`);
-          WazeWrap.Alerts.error(scriptName, `Current ${item} "${layerName}" Boundary already Loaded!`);
-          return;
-        } catch (error) {
-          if (error.name === "InvalidStateError") {
-            // Layer does not exist: it's safe to proceed further
-            if (debug) console.log(`${scriptName}: Layer "${layerName}" does not exist, proceeding to parse file.`);
-          } else {
-            console.error(`${scriptName}: Error checking layer existence`, error);
-            WazeWrap.Alerts.error(scriptName, `Error checking layer existence.\n${error.message}`);
+        // Check if the layer already exists
+        let layers = W.map.getLayersBy("layerGroup", "wme_geometry");
+        for (let layer of layers) {
+          if (layer.name === "Geometry: " + layerName) {
+            if (debug) console.log(`${scriptName}: current ${item} already loaded`);
+            WazeWrap.Alerts.info(scriptName, `Current ${item} Boundary already Loaded!`);
             return;
           }
         }
 
-        // Create the layer object and invoke parseFile since the layer does not exist
-        const obj = new layerStoreObj(geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, `${layerName}`, "GEOJSON");
+        // Create a new layer object
+        let obj = new layerStoreObj(
+          geojson,
+          color,
+          "GEOJSON",
+          layerName,
+          fillOpacity,
+          fontsize,
+          lineopacity,
+          linesize,
+          linestyle,
+          labelpos,
+          "${NAME}",
+          "GEOJSON"
+        );
+
         parseFile(obj);
       })
       .catch((error) => {
@@ -1326,7 +1577,10 @@ var geometries = function () {
    * Notes:
    * - Operates within a larger system context, relying on global variables such as `formats` for file format validation.
    *************************************************************************/
+
   function addGeometryLayer() {
+    toggleParsingMessage(true); // turn off in parseFile()
+
     const fileList = document.getElementById("GeometryFile");
     const file = fileList.files[0];
     fileList.value = "";
@@ -1344,7 +1598,9 @@ var geometries = function () {
     const lineopacity = document.getElementById("line_stroke_opacity").value;
     const linesize = document.getElementById("line_size").value;
     const linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
-    const labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
+    const labelpos =
+      document.querySelector('input[name="label_pos_horizontal"]:checked').value +
+      document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
     const reader = new FileReader();
 
@@ -1355,20 +1611,41 @@ var geometries = function () {
 
           switch (fileext) {
             case "ZIP":
-              if (debug) console.log(`${scriptName}: .ZIP shapefile file found, converting to GEOJSON...`);
+              if (debug)
+                console.log(
+                  `${scriptName}: .ZIP shapefile file found, format not supported by OpenLayers v 2.13.1, converting to GEOJSON...`
+                );
               if (debug) console.time(`${scriptName}: .ZIP shapefile conversion in`);
 
               const geoSHPer = new GeoSHPer();
 
+              // Using an IIFE to handle the async operation with try/catch
               (async () => {
                 try {
-                  toggleParsingMessage(true); // turned off in parseFile()
+                  toggleParsingMessage(true); // Show the parsing message at the start
 
+                  // Ensure the operation is awaited
                   await geoSHPer.read(e.target.result);
-                  const SHPgeoJSON = geoSHPer.toGeoJSON();
+                  const geoJSON = geoSHPer.toGeoJSON();
+                  const geojsonWithoutZ = removeZCoordinates(geoJSON); // Current WME Open Layers 2.13.1 geoJSON parser does not support z and or M
+
                   if (debug) console.timeEnd(`${scriptName}: .ZIP shapefile conversion in`);
 
-                  const fileObj = new layerStoreObj(SHPgeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "SHP");
+                  const fileObj = new layerStoreObj(
+                    geojsonWithoutZ,
+                    color,
+                    "GEOJSON",
+                    filename,
+                    fillOpacity,
+                    fontsize,
+                    lineopacity,
+                    linesize,
+                    linestyle,
+                    labelpos,
+                    "",
+                    "SHP"
+                  );
+
                   parseFile(fileObj);
                 } catch (error) {
                   toggleParsingMessage(false);
@@ -1379,17 +1656,50 @@ var geometries = function () {
 
             case "WKT":
               try {
-                // WKT files are assumed to be in projection WGS84  = EPSG:4326
-                if (debug) console.log(`${scriptName}: .WKT file found, converting to GEOJSON...`);
-                if (debug) console.time(`${scriptName}: .WKT conversion in`);
-                toggleParsingMessage(true); // turned off in parseFile()
+                if (forceGeoJSON) {
+                  // WKT files are assumed to be in projection WGS84  = EPSG:4326
+                  if (debug)
+                    console.log(`${scriptName}: .WKT file found, forceGeoJSON is ON, converting to GEOJSON...`);
+                  if (debug) console.time(`${scriptName}: .WKT conversion in`);
 
-                const geoWKTer = new GeoWKTer();
-                const wktDoc = geoWKTer.read(e.target.result, filename);
-                const WKTgeoJSON = geoWKTer.toGeoJSON(wktDoc);
+                  const geoWKTer = new GeoWKTer();
+                  const wktDoc = geoWKTer.read(e.target.result, filename); // Read entire content as a single WKT input
+                  const geoJSON = geoWKTer.toGeoJSON(wktDoc);
 
-                if (debug) console.timeEnd(`${scriptName}: .WKT conversion in`);
-                fileObj = new layerStoreObj(WKTgeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                  if (debug) console.timeEnd(`${scriptName}: .WKT conversion in`);
+
+                  fileObj = new layerStoreObj(
+                    geoJSON,
+                    color,
+                    "GEOJSON",
+                    filename,
+                    fillOpacity,
+                    fontsize,
+                    lineopacity,
+                    linesize,
+                    linestyle,
+                    labelpos,
+                    "",
+                    fileext
+                  );
+                } else {
+                  if (debug)
+                    console.log(`${scriptName}: .WKT file found, forceGeoJSON is OFF.... passing to OpenLayers...`);
+                  fileObj = new layerStoreObj(
+                    e.target.result,
+                    color,
+                    fileext,
+                    filename,
+                    fillOpacity,
+                    fontsize,
+                    lineopacity,
+                    linesize,
+                    linestyle,
+                    labelpos,
+                    "",
+                    fileext
+                  );
+                }
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -1398,18 +1708,52 @@ var geometries = function () {
               break;
 
             case "GPX":
-              //The GPX format is inherently based on the WGS 84 coordinate system (EPSG:4326)
+              //The GPX format is inherently based on the WGS 84 coordinate system (EPSG:4326) using latitude and longitude.
               try {
-                if (debug) console.log(`${scriptName}: .GPX file found, converting to GEOJSON...`);
-                if (debug) console.time(`${scriptName}: .GPX conversion in`);
-                toggleParsingMessage(true); // turned off in parseFile()
+                if (forceGeoJSON) {
+                  if (debug)
+                    console.log(`${scriptName}: .GPX file found, forceGeoJSON is ON.... converting to GEOJSON...`);
+                  if (debug) console.time(`${scriptName}: .GPX conversion in`);
 
-                const geoGPXer = new GeoGPXer();
-                const gpxDoc = geoGPXer.read(e.target.result);
-                const GPXtoGeoJSON = geoGPXer.toGeoJSON(gpxDoc);
+                  const geoGPXer = new GeoGPXer();
+                  const gpxDoc = geoGPXer.read(e.target.result);
+                  const GPXtoGeoJSON = geoGPXer.toGeoJSON(gpxDoc);
 
-                if (debug) console.timeEnd(`${scriptName}: .GPX conversion in`);
-                fileObj = new layerStoreObj(GPXtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                  if (debug) console.timeEnd(`${scriptName}: .GPX conversion in`);
+
+                  fileObj = new layerStoreObj(
+                    GPXtoGeoJSON,
+                    color,
+                    "GEOJSON",
+                    filename,
+                    fillOpacity,
+                    fontsize,
+                    lineopacity,
+                    linesize,
+                    linestyle,
+                    labelpos,
+                    "",
+                    fileext
+                  );
+                } else {
+                  if (debug)
+                    console.log(`${scriptName}: .GPX file found, forceGeoJSON is OFF.... passing to OpenLayers...`);
+                  fileObj = new layerStoreObj(
+                    e.target.result,
+                    color,
+                    fileext,
+                    filename,
+                    fillOpacity,
+                    fontsize,
+                    lineopacity,
+                    linesize,
+                    linestyle,
+                    labelpos,
+                    "",
+                    fileext
+                  );
+                }
+
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -1418,18 +1762,53 @@ var geometries = function () {
               break;
 
             case "KML":
-              //Represent geographic data and are natively based on the WGS 84 coordinate system (EPSG:4326)
+              //Represent geographic data and are natively based on the WGS 84 coordinate system (EPSG:4326), using latitude and longitude.
               try {
-                if (debug) console.log(`${scriptName}: .KML file found, converting to GEOJSON...`);
-                if (debug) console.time(`${scriptName}: .KML conversion in`);
-                toggleParsingMessage(true); // turned off in parseFile()
+                if (forceGeoJSON) {
+                  if (debug)
+                    console.log(`${scriptName}: .KML file found, forceGeoJSON is ON.... converting to GEOJSON...`);
+                  if (debug) console.time(`${scriptName}: .KML conversion in`);
 
-                const geoKMLer = new GeoKMLer();
-                const kmlDoc = geoKMLer.read(e.target.result);
-                const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
+                  const geoKMLer = new GeoKMLer(); // Currently only extrancts X & Y, when updated for Z will need to add removeZCoordinates() on the output for OL 2.13.1 GeoJSON parser.
+                  const kmlDoc = geoKMLer.read(e.target.result);
+                  const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
+                  const geojsonWithoutZ = removeZCoordinates(KMLtoGeoJSON); // Current WME Open Layers 2.13.1 geoJSON parser does not support z and or M
 
-                if (debug) console.timeEnd(`${scriptName}: .KML conversion in`);
-                fileObj = new layerStoreObj(KMLtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                  if (debug) console.timeEnd(`${scriptName}: .KML conversion in`);
+
+                  fileObj = new layerStoreObj(
+                    geojsonWithoutZ,
+                    color,
+                    "GEOJSON",
+                    filename,
+                    fillOpacity,
+                    fontsize,
+                    lineopacity,
+                    linesize,
+                    linestyle,
+                    labelpos,
+                    "",
+                    fileext
+                  );
+                } else {
+                  if (debug)
+                    console.log(`${scriptName}: .KML file found, forceGeoJSON is OFF.... passing to OpenLayers...`);
+                  fileObj = new layerStoreObj(
+                    e.target.result,
+                    color,
+                    fileext,
+                    filename,
+                    fillOpacity,
+                    fontsize,
+                    lineopacity,
+                    linesize,
+                    linestyle,
+                    labelpos,
+                    "",
+                    fileext
+                  );
+                }
+
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -1438,11 +1817,9 @@ var geometries = function () {
               break;
 
             case "KMZ":
-              //Represent geographic data and are natively based on the WGS 84 coordinate system (EPSG:4326)
-              if (debug) console.log(`${scriptName}: .KMZ file found, extracting .KML files...`);
+              if (debug) console.log(`${scriptName}: .KMZ file found, forceGeoJSON is ON.... converting to GEOJSON...`);
               if (debug) console.time(`${scriptName}: .KMZ conversion in`);
-              toggleParsingMessage(true); // turned off in parseFile()
-
+              // Initialize the GeoKMZer instance
               const geoKMZer = new GeoKMZer();
 
               (async () => {
@@ -1455,13 +1832,49 @@ var geometries = function () {
                     // Construct unique filenames for each KML file
                     const uniqueFilename = kmlContentsArray.length > 1 ? `${filename}_${index + 1}` : `${filename}`;
 
-                    if (debug) console.log(`${scriptName}: Converting extracted .KML to GEOJSON...`);
-                    const geoKMLer = new GeoKMLer();
-                    const kmlDoc = geoKMLer.read(content);
-                    const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
+                    if (forceGeoJSON) {
+                      if (debug) console.log(`${scriptName}: Converting extracted .KML to GEOJSON...`);
 
-                    if (debug) console.timeEnd(`${scriptName}: .KMZ conversion in`);
-                    fileObj = new layerStoreObj(KMLtoGeoJSON, color, "GEOJSON", uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "KMZ");
+                      const geoKMLer = new GeoKMLer();
+                      const kmlDoc = geoKMLer.read(content);
+                      const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
+                      const geojsonWithoutZ = removeZCoordinates(KMLtoGeoJSON); // Current WME Open Layers 2.13.1 geoJSON parser does not support z and or M
+
+                      if (debug) console.timeEnd(`${scriptName}: .KMZ conversion in`);
+
+                      // Create a layer store object for GeoJSON format
+                      fileObj = new layerStoreObj(
+                        geojsonWithoutZ,
+                        color,
+                        "GEOJSON",
+                        uniqueFilename,
+                        fillOpacity,
+                        fontsize,
+                        lineopacity,
+                        linesize,
+                        linestyle,
+                        labelpos,
+                        "",
+                        "KMZ"
+                      );
+                    } else {
+                      // Create a layer store object for KML format
+                      fileObj = new layerStoreObj(
+                        content,
+                        color,
+                        "KML",
+                        uniqueFilename,
+                        fillOpacity,
+                        fontsize,
+                        lineopacity,
+                        linesize,
+                        linestyle,
+                        labelpos,
+                        "",
+                        "KMZ"
+                      );
+                    }
+
                     parseFile(fileObj);
                   });
                 } catch (error) {
@@ -1473,17 +1886,50 @@ var geometries = function () {
 
             case "GML":
               try {
-                if (debug) console.log(`${scriptName}: .GML file found, converting to GEOJSON...`);
-                if (debug) console.time(`${scriptName}: .GML conversion in`);
-                toggleParsingMessage(true); // turned off in parseFile()
+                if (forceGeoJSON) {
+                  if (debug)
+                    console.log(`${scriptName}: .GML file found, forceGeoJSON is ON.... converting to GEOJSON...`);
+                  if (debug) console.time(`${scriptName}: .GML conversion in`);
 
-                const geoGMLer = new GeoGMLer();
-                const gmlDoc = geoGMLer.read(e.target.result);
-                const GMLtoGeoJSON = geoGMLer.toGeoJSON(gmlDoc);
+                  const geoGMLer = new GeoGMLer(); // WIP, but does the basics well and more GML versions than the OpenLayers 2.13.1 or even OL 4.X parsers
+                  const gmlDoc = geoGMLer.read(e.target.result);
+                  const GMLtoGeoJSON = geoGMLer.toGeoJSON(gmlDoc);
 
-                if (debug) console.timeEnd(`${scriptName}: .GML conversion in`);
+                  if (debug) console.log(`${scriptName}: GML GeoJSON:`, GMLtoGeoJSON);
+                  if (debug) console.timeEnd(`${scriptName}: .GML conversion in`);
 
-                fileObj = new layerStoreObj(GMLtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                  fileObj = new layerStoreObj(
+                    GMLtoGeoJSON,
+                    color,
+                    "GEOJSON",
+                    filename,
+                    fillOpacity,
+                    fontsize,
+                    lineopacity,
+                    linesize,
+                    linestyle,
+                    labelpos,
+                    "",
+                    fileext
+                  );
+                } else {
+                  if (debug)
+                    console.log(`${scriptName}: .GML file found, forceGeoJSON is OFF.... passing to OpenLayers...`);
+                  fileObj = new layerStoreObj(
+                    e.target.result,
+                    color,
+                    fileext,
+                    filename,
+                    fillOpacity,
+                    fontsize,
+                    lineopacity,
+                    linesize,
+                    linestyle,
+                    labelpos,
+                    "",
+                    fileext
+                  );
+                }
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -1493,10 +1939,25 @@ var geometries = function () {
 
             case "GEOJSON":
               try {
-                if (debug) console.log(`${scriptName}: .GEOJSON file found...`);
-                toggleParsingMessage(true); // turned off in parseFile()
-                const geojsonData = JSON.parse(e.target.result); // Parse the .GEOJSON file content as a JSON object
-                fileObj = new layerStoreObj(geojsonData, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                if (debug) console.log(`${scriptName}: .GEOJSON file found ... passing to OpenLayers...`);
+
+                const geojsonWithoutZ = removeZCoordinates(e.target.result); // While WME uses OpenLayers 2.13.1, the GeoJSON parser fails if it encounters Z and possibly M values.
+
+                fileObj = new layerStoreObj(
+                  geojsonWithoutZ,
+                  color,
+                  fileext,
+                  filename,
+                  fillOpacity,
+                  fontsize,
+                  lineopacity,
+                  linesize,
+                  linestyle,
+                  labelpos,
+                  "",
+                  fileext
+                );
+
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -1530,400 +1991,209 @@ var geometries = function () {
     }
   }
 
-  /****************************************************************************************
-   * transformGeoJSON
-   *
-   * Transforms the coordinates of a GeoJSON object from a source CRS to a target CRS using proj4.
-   * Validates CRS formats and ensures their definitions exist in proj4 before proceeding.
-   *
-   * Parameters:
-   * @param {Object} geoJSON - The GeoJSON object to transform, which can be a FeatureCollection,
-   * Feature, GeometryCollection, or Geometry.
-   * @param {string} sourceCRS - The source Coordinate Reference System, formatted as 'EPSG:####'.
-   * @param {string} targetCRS - The target Coordinate Reference System, formatted as 'EPSG:####'.
-   *
-   * Returns:
-   * @returns {Object} - The transformed GeoJSON object with updated coordinates.
-   *
-   * Workflow:
-   * - Validates CRS formats and checks for their existence in proj4 definitions.
-   * - Depending on GeoJSON type, recursively applies coordinate conversion.
-   * - Updates the CRS information within the GeoJSON to reflect the target CRS.
-   ****************************************************************************************/
-  function transformGeoJSON(geoJSON, sourceCRS, targetCRS) {
-    if (debug) console.log(`${scriptName}: transformGeoJSON() called with SourceCRS = ${sourceCRS} and TargetCRS = ${targetCRS}`);
-
-    const isValidCRS = (crs) => typeof crs === "string" && /^EPSG:\d{4,5}$/.test(crs);
-
-    if (!isValidCRS(sourceCRS) || !isValidCRS(targetCRS)) {
-      console.error(`${scriptName}: Invalid CRS format detected: sourceCRS: ${sourceCRS}, targetCRS: ${targetCRS}`);
-      throw new Error("Coordinates Reference Systems must be formatted as a string 'EPSG:####'.");
-    }
-
-    if (!proj4.defs[sourceCRS]) {
-      console.error(`${scriptName}: Source CRS ${sourceCRS} is not defined in proj4.`);
-      throw new Error(`Source CRS ${sourceCRS} is not defined in proj4.`);
-    }
-
-    if (!proj4.defs[targetCRS]) {
-      console.error(`${scriptName}: Target CRS ${targetCRS} is not defined in proj4.`);
-      throw new Error(`Target CRS ${targetCRS} is not defined in proj4.`);
-    }
-
-    const geoJSONTypeMap = {
-      FEATURECOLLECTION: "FeatureCollection",
-      FEATURE: "Feature",
-      GEOMETRYCOLLECTION: "GeometryCollection",
-      POINT: "Point",
-      LINESTRING: "LineString",
-      POLYGON: "Polygon",
-      MULTIPOINT: "MultiPoint",
-      MULTILINESTRING: "MultiLineString",
-      MULTIPOLYGON: "MultiPolygon",
-    };
-
-    const updateGeoJSONType = (type) => geoJSONTypeMap[type.toUpperCase()] || type;
-
-    // Normalize the feacher "type" at the root level to valid geoJSON
-    geoJSON.type = updateGeoJSONType(geoJSON.type);
-
-    if (geoJSON.type === "FeatureCollection") {
-      geoJSON.features = flattenGeoJSON(geoJSON.features, sourceCRS, targetCRS);
-    } else if (geoJSON.type === "Feature") {
-      geoJSON.geometry = flattenGeometry(geoJSON.geometry, sourceCRS, targetCRS);
-    } else if (geoJSON.type === "GeometryCollection") {
-      geoJSON.geometries = geoJSON.geometries.map((geometry) => flattenGeometry(geometry, sourceCRS, targetCRS));
-    }
-
-    geoJSON.crs = {
-      type: "name",
-      properties: {
-        name: targetCRS,
-      },
-    };
-
-    return geoJSON;
-  }
-
-  /****************************************************************************************
-   * flattenGeoJSON
-   *
-   * Converts complex geometries (MultiPoint, MultiLineString, MultiPolygon) into simpler forms
-   * (Point, LineString, Polygon) and applies coordinate transformations.
-   *
-   * Parameters:
-   * @param {Array} features - The array of features from the GeoJSON FeatureCollection.
-   * @param {string} sourceCRS - The source Coordinate Reference System, formatted as 'EPSG:####'.
-   * @param {string} targetCRS - The target Coordinate Reference System, formatted as 'EPSG:####'.
-   *
-   * Returns:
-   * @returns {Array} - The array of flattened and transformed features.
-   ****************************************************************************************/
-  function flattenGeoJSON(features, sourceCRS, targetCRS) {
-    return features.flatMap((feature) => {
-      //featureIndex - JS55CT
-      const flattenedGeometries = [];
-      geomEach(feature.geometry, (geometry) => {
-        const type = geometry === null ? null : geometry.type;
-        switch (type) {
-          case "Point":
-          case "LineString":
-          case "Polygon":
-            flattenedGeometries.push({
-              type: "Feature",
-              geometry: {
-                type: type,
-                coordinates: convertCoordinates(sourceCRS, targetCRS, geometry.coordinates),
-              },
-              properties: feature.properties,
-            });
-            break;
-          case "MultiPoint":
-          case "MultiLineString":
-          case "MultiPolygon":
-            const geomType = type.split("Multi")[1];
-            geometry.coordinates.forEach((coordinate) => {
-              flattenedGeometries.push({
-                type: "Feature",
-                geometry: {
-                  type: geomType,
-                  coordinates: convertCoordinates(sourceCRS, targetCRS, coordinate),
-                },
-                properties: feature.properties,
-              });
-            });
-            break;
-          case "GeometryCollection":
-            geometry.geometries.forEach((geom) => {
-              flattenedGeometries.push({
-                type: "Feature",
-                geometry: {
-                  type: geom.type,
-                  coordinates: convertCoordinates(sourceCRS, targetCRS, geom.coordinates),
-                },
-                properties: feature.properties,
-              });
-            });
-            break;
-          default:
-            throw new Error(`Unknown Geometry Type: ${type}`);
-        }
-      });
-      return flattenedGeometries;
-    });
-  }
-
-  /****************************************************************************************
-   * geomEach
-   *
-   * Iterates over each geometry in a feature to handle different types and coordinate structures.
-   *
-   * Parameters:
-   * @param {Object} geometry - The geometry object extracted from a feature.
-   * @param {Function} callback - A callback function to execute for each geometry type.
-   ****************************************************************************************/
-  function geomEach(geometry, callback) {
-    const type = geometry === null ? null : geometry.type;
-    switch (type) {
-      case "Point":
-      case "LineString":
-      case "Polygon":
-        callback(geometry);
-        break;
-      case "MultiPoint":
-      case "MultiLineString":
-      case "MultiPolygon":
-        geometry.coordinates.forEach((coordinate) => {
-          callback({
-            type: type.split("Multi")[1],
-            coordinates: coordinate,
-          });
-        });
-        break;
-      case "GeometryCollection":
-        geometry.geometries.forEach(callback);
-        break;
-      default:
-        throw new Error(`Unknown Geometry Type: ${type}`);
-    }
-  }
-
-  /****************************************************************************************
-   * convertCoordinates
-   *
-   * Converts coordinates from a source CRS to a target CRS using proj4. Handles different
-   * coordinate structures like points, lines, and polygons recursively if necessary.
-   *
-   * Parameters:
-   * @param {string} sourceCRS - The CRS of the input coordinates, as 'EPSG:####'.
-   * @param {string} targetCRS - The CRS to convert the coordinates to, as 'EPSG:####'.
-   * @param {Array} coordinates - Array representing the coordinates to be converted. This
-   * could be a single point [x, y] or recursive arrays for lines and polygons.
-   *
-   * Returns:
-   * @returns {Array} - The converted coordinates with Z & M dimension removed if present.
-   *
-   * Workflow:
-   * - Recursively converts coordinate arrays for complex geometries.
-   * - Applies proj4 transformation to single points.
-   ****************************************************************************************/
-  function convertCoordinates(sourceCRS, targetCRS, coordinates) {
-    // Function to strip Z coordinates
-    function stripZ(coords) {
-      if (Array.isArray(coords[0])) {
-        return coords.map(stripZ);
-      } else {
-        return coords.slice(0, 2); // Return only X, Y
-      }
-    }
-
-    const strippedCoords = stripZ(coordinates);
-    // Handle multi-point, line, or polygon coordinates recursively if needed
-    if (Array.isArray(strippedCoords[0])) {
-      return strippedCoords.map((coordinate) => convertCoordinates(sourceCRS, targetCRS, coordinate));
-    }
-
-    // Handle single point coordinates
-    if (typeof strippedCoords[0] === "number") {
-      const [x, y] = strippedCoords; // Destructure into x and y
-
-      // Convert the single point using proj4
-      const convertedPoint = proj4(sourceCRS, targetCRS, [x, y]);
-      return convertedPoint;
-    }
-
-    console.warn(`${scriptName}: Unsupported coordinate format detected. Returning coordinates unchanged.`);
-    return strippedCoords;
-  }
-
-  /****************************************************************************************
+  /*************************************************************************************
    * parseFile
    *
-   * Processes geographic data from a file object, applying styles and adding it as a vector
-   * layer to the map. Handles projections and updates the UI based on file loading and
-   * parsing outcomes.
+   * Description:
+   * Processes a file object containing geographic data, formats, and styles it, adding the result as a vector layer
+   * to the map. The function updates the User Interface (UI) to reflect the file loading status and handles
+   * labeling configurations based on attribute selection within the file's data.
    *
    * Parameters:
-   * @param {Object} fileObj - Contains file data and styling configurations.
-   *   - {string} fileObj.filename - Name of the file.
-   *   - {string} fileObj.fileext - File extension to select the parser.
-   *   - {string} fileObj.fileContent - File's geographic content.
-   *   - {string} fileObj.color - Color for styling.
-   *   - {number} fileObj.lineopacity, fileObj.linesize, fileObj.linestyle - Line styling.
-   *   - {number} fileObj.fillOpacity - Opacity for fill areas.
-   *   - {number} fileObj.fontsize - Font size for labels.
-   *   - {string} fileObj.labelpos - Label anchor position.
-   *   - {string} fileObj.labelattribute - Attribute for labeling features.
+   * @param {Object} fileObj - An object containing data and metadata for the file to be parsed.
+   *   - {string} fileObj.filename - Name of the file processed.
+   *   - {string} fileObj.fileext - File extension, used to determine the appropriate parser.
+   *   - {string} fileObj.fileContent - Raw content of the file.
+   *   - {string} fileObj.color - Specifies the color styling for the layer.
+   *   - {number} fileObj.lineopacity, fileObj.linesize, fileObj.linestyle - Line styling settings.
+   *   - {number} fileObj.fillOpacity - Opacity for filled areas.
+   *   - {number} fileObj.fontsize - Font size for labeling purposes.
+   *   - {string} fileObj.labelpos - Anchor position for any labels.
    *
-   * Workflow:
-   * - Validates parser selection based on file extension.
-   * - Determines source CRS from file content, defaulting to EPSG:4326 if not specified.
-   * - Uses proj4 to transform the GeoJSON features when needed, targeting EPSG:3857.
-   * - Parses features using the appropriate parser and handles errors.
-   * - Configures labeling based on given attribute or prompts the user for selection.
-   * - Updates map with the styled layer composed of parsed features.
-   * - Manages user interface updates regarding file processing status.
-   ****************************************************************************************/
+   * Behavior:
+   * - Outputs debug information if debugging is activated.
+   * - Establishes style configurations for the vector layer using properties defined in `fileObj`.
+   * - Determines the correct parser to use based on the file's extension, setting projections appropriately.
+   * - Attempts to parse the file content into geographic features, logging any errors encountered.
+   * - If the file's attribute contains a previously set label attribute, it proceeds to create a styled layer with labels.
+   * - For files without a pre-defined label attribute, it offers an interface for user selection from the attributes.
+   * - Constructs the vector layer, styles, and integrates it onto the map, managing labels based on user input or default settings.
+   * - Updates the UI list items to reflect the status and details of loading the file.
+   ***************************************************************************************/
   function parseFile(fileObj) {
     if (debug) console.log(`${scriptName}: parseFile(): called with input of:`, fileObj);
-
-    //const fileext = fileObj.fileext.toUpperCase();
+    const fileext = fileObj.fileext.toUpperCase();
     const orgFileext = fileObj.orgFileext.toUpperCase();
     const fileContent = fileObj.fileContent;
     const filename = fileObj.filename;
+    const parser = formats[fileext];
 
-    // Initialize sourceCRS to a default value (e.g., EPSG:4326) to ensure it's always defined
-    let sourceCRS = "EPSG:4326"; // Default CRS if one can't be loacated in the GeoJSON most common one
+    // Check initialization of parser
+    if (!parser) {
+      console.error(`${scriptName}: No parser found for format: ${fileext}`);
+      return;
+    }
 
-    if (fileContent.crs && fileContent.crs.properties && fileContent.crs.properties.name) {
-      const projection = fileContent.crs.properties.name;
+    // Assign internal projection
+    parser.internalProjection = W.map.getProjectionObject(); // currently WME is EPSG:900913
+    let foundProjection = false;
 
-      let mappedCRS = projectionMap[projection];
-      if (mappedCRS) {
-        sourceCRS = mappedCRS; // Update only if a mapping exists
-        if (debug) console.log(`${scriptName}: External Projection found in file: ${projection} was mapped to: ${sourceCRS}`);
+    // Convert fileContent to a string if it's an object
+    let contentToTest;
+    if (typeof fileContent === "object") {
+      contentToTest = JSON.stringify(fileContent); // Stringify the object for searching
+    } else {
+      contentToTest = fileContent; // Use it directly if it's already a string
+    }
+
+    // Regex pattern to capture various projections
+    const projectionPattern =
+      /("EPSG:\d{1,6}"|"CRS:\d{1,6}"|CRS\d{0,6}|CRS:\s*WGS84|WGS84|\bWGS\s84\b|\bCRS\s84\b|\bNAD\s83\b|NAD83|\bNAD\s27\b|NAD27|\bETRS\s89\b|ETRS89|"EPSG::\d{1,6}"|"urn:ogc:def:crs:EPSG::\d{1,6}"|"urn:ogc:def:crs:EPSG:\d{1,6}\.\d{1,6}:\d{1,6}"|"urn:ogc:def:crs:OGC:1\.3:[^"]*")/;
+
+    // Finds the first match in the input content. While it is possible for some geometry file types to have different projections per feature, this assumes all features have the same projection.
+    const match = contentToTest.match(projectionPattern);
+
+    if (match) {
+      let projection = match[0].replace(/"/g, "");
+
+      // Check if the match exists in the projection map
+      if (projectionMap[projection]) {
+        if (debug) console.log(`${scriptName}: External Projection found in file: ${projection}`);
+        parser.externalProjection = projectionMap[projection]; // Set the external projection
+        foundProjection = true; // Mark as found
       } else {
-        const supportedProjections = "EPSG:3035|3414|4214|4258|4267|4283|4326|25832|26901->26923|27700|32601->32660|32701->32760| ";
+        const supportedProjections =
+          "EPSG:3035|3414|4214|4258|4267|4283|4326|25832|26901->26923|27700|32601->32660|32701->32760| ";
         const message = `Found unsupported projection: ${projection}. <br>Supported projections are: <br>${supportedProjections}. <br>Cannot proceed without a supported projection.`;
+
         console.error(`${scriptName}: Error - ${message}`);
         WazeWrap.Alerts.error(scriptName, message);
-        return;
+
+        return; // Stop further processing
       }
-    } else {
+    }
+
+    // Set default external projection if no match was found at all
+    if (!foundProjection) {
       const message = "No External projection found. <br>Defaulting to EPSG:4326 (WGS 84).";
       if (debug) {
         console.warn(`${scriptName}: Warning - ${message}`);
         WazeWrap.Alerts.info(scriptName, message);
       }
+      parser.externalProjection = projectionMap["EPSG:4326"]; // Default to WGS 84
     }
 
-    let featuresSDK;
+    if (debug) console.log(`${scriptName}: External projection is: ${parser.externalProjection}`);
+    if (debug) console.log(`${scriptName}: Internal projection is: ${parser.internalProjection}`);
 
+    let features;
     try {
-      const targetCRS = "EPSG:4326"; //New WME SDK uses EPSG:4326
-      // Transform CRS , remove Z & M, flatten geoJSON if needed!
-      const geoJSONToParse = transformGeoJSON(fileContent, sourceCRS, targetCRS);
-      // NEED TO ADD flatten LOGIC HERE
-      featuresSDK = geoJSONToParse.features;
+      features = parser.read(fileContent);
 
-      if (featuresSDK.length === 0) {
-        toggleParsingMessage(false);
-        console.error(`${scriptName}: No features found in transformed GeoJSON for ${filename}.${orgFileext}.`);
-        WazeWrap.Alerts.error(`${scriptName}: No features found in transformed GeoJSON for ${filename}.${orgFileext}.`);
-        return;
+      if (features.length === 0) {
+        toggleParsingMessage(false); // Turned on in addGeometryLayer()
+        WazeWrap.Alerts.error(scriptName, `No features found in file ${filename}.${orgFileext}`);
+        console.warn(`${scriptName}: No features found in file ${filename}.${orgFileext}.`);
+        return; // stop further execution when no features are found
       }
 
-      if (debug) console.log(`${scriptName}: Found ${featuresSDK.length} features for ${filename}.${orgFileext}.`);
+      if (debug) console.log(`${scriptName}: Found ${features.length} features for ${filename}.${orgFileext}.`);
     } catch (error) {
-      toggleParsingMessage(false);
-      console.error(`${scriptName}: Error parsing GeoJSON for ${filename}.${orgFileext}:`, error);
-      WazeWrap.Alerts.error(`${scriptName}: Error parsing GeoJSON for ${filename}.${orgFileext}:\n${error}`);
+      toggleParsingMessage(false); // Turned on in addGeometryLayer()
+      console.error(`${scriptName}: Error parsing file content for ${filename}.${orgFileext}:`, error);
+      WazeWrap.Alerts.error(scriptName, `Error parsing file content for ${filename}.${orgFileext}:\n${error}`);
       return;
     }
 
-    toggleParsingMessage(false); // turned on in parsefile()
+    toggleParsingMessage(false); // Turned on in addGeometryLayer()
 
     if (fileObj.labelattribute) {
-      createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS);
+      createLayerWithLabel(fileObj, features, parser.externalProjection); // Use the stored label attribute if it already exists
     } else {
-      if (Array.isArray(featuresSDK)) {
-        if (debug) console.log(`${scriptName}: Sample features objects:`, featuresSDK.slice(0, 10));
-        presentFeaturesAttributesSDK(featuresSDK.slice(0, 50), featuresSDK.length)
+      if (Array.isArray(features)) {
+        if (debug) console.log(`${scriptName}: Sample features objects:`, features.slice(0, 10));
+
+        // Await user interaction to get the label attribute when it's not already set
+        presentFeaturesAttributes(features.slice(0, 50), features.length)
           .then((selectedAttribute) => {
             if (selectedAttribute) {
               fileObj.labelattribute = selectedAttribute;
               console.log(`${scriptName}: Label attribute selected: ${fileObj.labelattribute}`);
-              createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS);
+              createLayerWithLabel(fileObj, features, parser.externalProjection);
             }
           })
           .catch((cancelReason) => {
             console.warn(`${scriptName}: User cancelled attribute selection and import: ${cancelReason}`);
           });
+      } else {
+        // Directly create the layer with the features when it is not an array
+        createLayerWithLabel(fileObj, features, parser.externalProjection);
       }
     }
   }
 
   /******************************************************************************************
-   * createLayerWithLabelSDK
+   * createLayerWithLabel
    *
    * Description:
-   * Configures and adds a new vector layer to the map using the WME SDK, applying styling and
-   * dynamic labeling based on attributes from geographic features. This function handles the label
-   * styling context, constructs the layer using SDK capabilities, updates the UI with toggler
-   * controls, and stores the layer configuration in IndexedDB to preserve its state across sessions.
+   * Configures and adds a new vector layer to the map, applying styling and dynamic labeling
+   * based on attributes from the geographic features. This function manages the label style context,
+   * constructs the layer, updates the UI with toggler controls, and stores the layer configuration
+   * in IndexedDB storage to preserve its state across sessions.
    *
    * Parameters:
-   * @param {Object} fileObj - Contains metadata and styling options for the layer.
-   *   - {string} filename - Name of the file, sanitized and used for layer ID.
-   *   - {string} color - Color for layer styling.
-   *   - {number} lineopacity - Opacity for line styling.
-   *   - {number} linesize - Width of lines in the layer.
-   *   - {string} linestyle - Dash style for lines.
-   *   - {number} fillOpacity - Opacity for filling geometries.
-   *   - {number} fontsize - Font size for labels and points.
-   *   - {string} labelattribute - Template string for labeling features with `${attribute}` syntax.
-   *   - {string} labelpos - Position for label text alignment.
+   * @param {Object} fileObj - Object containing metadata and styling options for the layer.
+   *   - {string} fileObj.filename - The name of the file, used for layer identification.
+   *   - {string} fileObj.color - The color used for styling the layer.
+   *   - {number} fileObj.lineopacity - Opacity for line styling.
+   *   - {number} fileObj.linesize - Width of lines in the layer.
+   *   - {string} fileObj.linestyle - Dash style for lines.
+   *   - {number} fileObj.fillOpacity - Opacity for filling geometries.
+   *   - {number} fileObj.fontsize - Font size for labels and points.
+   *   - {string} fileObj.labelattribute - Template string for labeling features; may use `${attribute}` syntax.
+   *   - {string} fileObj.labelpos - Position for label text alignment.
    * @param {Array} features - Array of geographic features to be added to the layer.
-   * @param {Object} externalProjection - Projection object for transforming feature coordinates.
+   * @param {Object} externalProjection - Projection object for transforming feature coordinates as necessary.
    *
    * Behavior:
-   * - Constructs a label context to format and position labels based on feature attributes.
-   * - Defines layer styling using attributes from `fileObj` and assigns style context for dynamic label computation.
-   * - Creates a vector layer using the SDK, setting its unique ID from the sanitized filename.
-   * - Uses SDK to manage layer visibility and adds geographic features to the layer.
-   * - Registers the layer with a group toggler for UI controls to manage its visibility.
-   * - Integrates the layer into the main map and manages associated UI elements for toggling.
+   * - Constructs a label context with functions to format and position labels based on feature attributes.
+   * - Defines layer styling using attributes from `fileObj` and assigns a context for dynamic label computation.
+   * - Creates a new vector layer, sets its unique ID, and assigns a z-index for rendering order.
+   * - Uses `OpenLayers.StyleMap` to apply the defined style and attaches provided features to the layer.
    * - Prevents duplicate storage by checking existing layers, updating IndexedDB storage only for new layers.
+   * - Registers the layer with a group toggler, providing UI controls for visibility management.
+   * - Integrates the layer into the main map and manages additional elements like toggling and list updates.
    ******************************************************************************************/
-  async function createLayerWithLabelSDK(fileObj, features, externalProjection) {
-    toggleLoadingMessage(true); // Show the user the loading message!
+  async function createLayerWithLabel(fileObj, features, externalProjection) {
+    toggleLoadingMessage(true); // Show the user a loading message!
 
     const delayDuration = 300;
     setTimeout(async () => {
       try {
         let labelContext = {
-          formatLabel: (context) => {
+          formatLabel: function (feature) {
             let labelTemplate = fileObj.labelattribute;
 
             if (!labelTemplate || labelTemplate.trim() === "") {
               return "";
             }
 
+            // Handle new lines /n & <br>
             labelTemplate = labelTemplate.replace(/\\n/g, "\n").replace(/<br\s*\/?>/gi, "\n");
 
+            // If the labelTemplate does not include a ${ placeholder, return it as is
             if (!labelTemplate.includes("${")) {
               return labelTemplate;
             }
 
+            // Handle templated inputs like '${name}'
             labelTemplate = labelTemplate
               .replace(/\${(.*?)}/g, (match, attributeName) => {
                 attributeName = attributeName.trim();
 
-                if (context?.feature?.properties?.[attributeName]) {
-                  let attributeValue = context.feature.properties[attributeName] || "";
-                  if (typeof attributeValue !== "string") {
-                    attributeValue = String(attributeValue);
-                  }
+                if (feature.attributes.hasOwnProperty(attributeName)) {
+                  let attributeValue = feature.attributes[attributeName] || "";
+                  // Replace <br> with \n in the attribute value
                   attributeValue = attributeValue.replace(/<br\s*\/?>/gi, "\n");
                   return attributeValue;
                 }
@@ -1951,105 +2221,58 @@ var geometries = function () {
           labelOutlineWidth: fileObj.fontsize / 4,
           labelAlign: fileObj.labelpos,
           label: "${formatLabel}",
+          //pathLabel: "${formatLabel}",
+          //labelSelect: false,
+          //pathLabelYOffset: "${getOffset}",
+          //pathLabelCurve: "${getSmooth}",
+          //pathLabelReadable: "${getReadable}",
         };
 
-        const layerConfig = {
-          styleContext: labelContext,
-          styleRules: [
-            {
-              predicate: () => true,
-              style: layerStyle,
-            },
-          ],
-        };
+        let defaultStyle = new OpenLayers.Style(layerStyle, { context: labelContext });
+        let layerid = `wme_geometry_${layerindex}`;
 
-        let layerid = fileObj.filename.replace(/[^a-z0-9_-]/gi, "_");
-
-        // Using the SDK to add the layer with styles and zIndexing
-        // Future Idea: Consider removing the return statements to test scenarios where two files with the same name load into the same layer but contain different features.
-        // Potential Behavior: Only the second file might get saved to IndexedDB for reload purposes. This might need upstream handling in parserFile().
-        // Enhancement: Implement a prompt to ask users if they want to merge new file loads into existing layers.
-        // Option: Provide a selection popup for users to choose which layer to merge if layers already exist.
-        // Current Approach: For now, we stop execution and inform the user if the layer name is already in use.
-        try {
-          wmeSDK.Map.addLayer({
-            layerName: layerid,
-            styleRules: layerConfig.styleRules,
-            styleContext: layerConfig.styleContext,
-            zIndexing: true,
-          });
-        } catch (error) {
-          if (error.name === "InvalidStateError") {
-            console.error(`${scriptName}: Layer "${fileObj.filename}" already exists.`);
-            WazeWrap.Alerts.error(scriptName, `Current Layer "${fileObj.filename}" already exists.`);
-            return;
-          } else {
-            console.error(`${scriptName}: Unexpected error:`, error);
-            WazeWrap.Alerts.error(scriptName, `Unexpected error creating Layer "${fileObj.filename}"`);
-            return;
-          }
-        }
-
-        // Set visibility to true for the layer
-        wmeSDK.Map.setLayerVisibility({ layerName: layerid, visibility: true });
-
-        // Map features array with unique index-based IDs
-        const featuresToLog = features.map((f, index) => ({
-          type: f.type,
-          id: f.properties.OBJECTID || `${layerid}_${index}`, // Use feature index for uniqueness
-          geometry: f.geometry,
-          properties: f.properties,
-        }));
-
-        // Initialize counters
-        let successCount = 0;
-        let errorCount = 0;
-
-        featuresToLog.forEach((feature) => {
-          try {
-            wmeSDK.Map.addFeatureToLayer({
-              feature: feature,
-              layerName: layerid,
-            });
-            successCount++; // Increment success counter
-          } catch (error) {
-            errorCount++; // Increment error counter
-            if (error.name === "InvalidStateError") {
-              console.error(`${scriptName}: Failed to add feature with ID: ${feature.id}. The layer "${layerid}" might not exist.`);
-            } else if (error.name === "ValidationError") {
-              console.error(`${scriptName}: Validation error for feature with ID: ${feature.id}. Check geometry type and properties.`, error);
-              console.error(`${scriptName}: Feature details:`, feature);
-            } else {
-              console.error(`${scriptName}: Unexpected error adding feature with ID: ${feature.id}:`, error);
-              console.error(`${scriptName}: Feature details:`, feature);
-            }
-          }
+        let WME_Geometry = new OpenLayers.Layer.Vector(`Geometry: ${fileObj.filename}`, {
+          rendererOptions: { zIndexing: true },
+          uniqueName: layerid,
+          layerGroup: "wme_geometry",
         });
 
-        // Log completion
-        console.log(`${scriptName}: ${successCount} features added, ${errorCount} features skipped do to errors, for layer: ${fileObj.filename}`);
+        WME_Geometry.setZIndex(-9999);
+        I18n.translations[I18n.locale].layers.name[layerid] = `WME Geometries: ${fileObj.filename}`;
+        WME_Geometry.styleMap = new OpenLayers.StyleMap(defaultStyle);
+        WME_Geometry.addFeatures(features);
 
-        // Add group toggler logic if necessary (assuming SDK supports it)
+        if (debug) console.log(`${scriptName}: New OpenLayers Geometry Object:`, WME_Geometry);
+
         if (!groupToggler) {
           groupToggler = addGroupToggler(false, "layer-switcher-group_wme_geometries", "WME Geometries");
         }
+
         addToGeoList(fileObj.filename, fileObj.color, fileObj.orgFileext, fileObj.labelattribute, externalProjection);
-        addLayerToggler(groupToggler, fileObj.filename, layerid);
+        addLayerToggler(groupToggler, fileObj.filename, WME_Geometry);
+
+        // Add the layer to the map before attempting storage
+        W.map.addLayer(WME_Geometry);
 
         // Check and store layers in IndexedDB
         try {
           await storeLayer(fileObj);
         } catch (error) {
           console.error(`${scriptName}: Failed to store data in IndexedDB:`, error);
-          WazeWrap.Alerts.error("Storage Error", "Failed to store data. Ensure IndexedDB is not full and try again. Layer will not be saved.");
+          WazeWrap.Alerts.error(
+            "Storage Error",
+            "Failed to store data. Ensure IndexedDB is not full and try again. Layer will not be saved."
+          );
         }
+
+        if (debug) console.log(`${scriptName}: New Layer ${fileObj.filename} Added`);
       } finally {
         toggleLoadingMessage(false); // Turn off the loading message!
       }
     }, delayDuration);
   }
 
-  /****************************************************************************
+  /**
    * storeLayer
    *
    * Asynchronously stores a given file object in an IndexedDB object store named "layers".
@@ -2069,7 +2292,7 @@ var geometries = function () {
    *
    * @returns {Promise} - Resolves when the file is successfully stored or skipped if it exists.
    *                      Rejects with an error if an operation fails.
-   ****************************************************************************/
+   */
   async function storeLayer(fileObj) {
     const transaction = db.transaction(["layers"], "readwrite");
     const store = transaction.objectStore("layers");
@@ -2098,7 +2321,11 @@ var geometries = function () {
           const addRequest = store.add(compressedFileObj);
 
           addRequest.onsuccess = function () {
-            console.log(`${scriptName}: Stored Compressed Data file - ${fileObj.filename}. Size: ${sizeInKilobits.toFixed(2)} Kb, ${sizeInMegabits.toFixed(3)} Mb`);
+            console.log(
+              `${scriptName}: Stored Compressed Data file - ${fileObj.filename}. Size: ${sizeInKilobits.toFixed(
+                2
+              )} Kb, ${sizeInMegabits.toFixed(3)} Mb`
+            );
             resolve();
           };
 
@@ -2126,7 +2353,22 @@ var geometries = function () {
       if (!existingMessage) {
         const loadingMessage = document.createElement("div");
         loadingMessage.id = "WMEGeoLoadingMessage";
-        loadingMessage.style = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 32px; background: rgba(0, 0, 0, 0.7); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); font-family: 'Arial', sans-serif; font-size: 1.1rem; text-align: center; z-index: 2000; color: #ffffff; border: 2px solid #ff5733;`;
+        loadingMessage.style = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 16px 32px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            font-family: 'Arial', sans-serif;
+            font-size: 1.1rem;
+            text-align: center;
+            z-index: 2000;
+            color: #ffffff;
+            border: 2px solid #ff5733;
+          `;
         loadingMessage.textContent = "WME Geometries: New Geometries Loading, please wait...";
         document.body.appendChild(loadingMessage);
       }
@@ -2144,7 +2386,22 @@ var geometries = function () {
       if (!existingMessage) {
         const parsingMessage = document.createElement("div");
         parsingMessage.id = "WMEGeoParsingMessage";
-        parsingMessage.style = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 32px; background: rgba(0, 0, 0, 0.7); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); font-family: 'Arial', sans-serif; font-size: 1.1rem; text-align: center; z-index: 2000; color: #ffffff; border: 2px solid #33ff57;`;
+        parsingMessage.style = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 16px 32px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            font-family: 'Arial', sans-serif;
+            font-size: 1.1rem;
+            text-align: center;
+            z-index: 2000;
+            color: #ffffff;
+            border: 2px solid #33ff57;
+          `;
         parsingMessage.textContent = "WME Geometries: Parsing and converting input files, please wait...";
         document.body.appendChild(parsingMessage);
       }
@@ -2155,213 +2412,117 @@ var geometries = function () {
     }
   }
 
-  /******************************************************************************
-   * Function: whatsInView
-   *
-   * Description:
-   * Displays or updates a draggable overlay on the webpage, showing geographical data
-   * currently in view. Calls `updateWhatsInView` to refresh content rather than rebuild
-   * the overlay if it already exists.
-   *
-   * Main Operations:
-   * - Checks for existing overlay (`WMEGeowhatsInViewMessage`). If present, updates it.
-   * - Otherwise, creates new overlay elements styled for display.
-   * - Makes the overlay draggable via its header.
-   * - Integrates custom scrollbar styles for aesthetic purposes.
-   * - Calls `updateWhatsInView` to fill the overlay with data.
-   **********************************************************************************/
   async function whatsInView() {
-    let whatsInView = document.getElementById("WMEGeowhatsInViewMessage");
-
-    if (!whatsInView) {
-      // Create the overlay if it doesn't exist
-      whatsInView = document.createElement("div");
-      whatsInView.id = "WMEGeowhatsInViewMessage";
-      whatsInView.style = `position: absolute; padding: 0; background: rgba(0, 0, 0, 0.8); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); z-index: 1000; width: 375px; height: 375px; min-width: 200px; min-height: 200px; max-width: 30vw; max-height: 40vh; left: 50%; top: 50%; transform: translate(-50%, -50%); resize: both; overflow: hidden;`;
-
-      const header = document.createElement("div");
-      header.style = `background: #33ff57; font-weight: 300; color: black; padding: 5px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center; height: 30px; position: sticky; top: 0; cursor: move;`;
-      const title = document.createElement("span");
-      title.innerText = "WME Geo - Whats in View";
-      header.appendChild(title);
-
-      const closeButton = document.createElement("span");
-      closeButton.textContent = "X";
-      closeButton.style = `cursor: pointer; font-size: 20px; margin-left: 10px;`;
-      closeButton.addEventListener("click", () => {
-        whatsInView.remove();
-      });
-      header.appendChild(closeButton);
-
-      header.onmousedown = (event) => {
-        event.preventDefault();
-        const initialX = event.clientX;
-        const initialY = event.clientY;
-        const offsetX = initialX - whatsInView.offsetLeft;
-        const offsetY = initialY - whatsInView.offsetTop;
-
-        document.onmousemove = (ev) => {
-          whatsInView.style.left = `${ev.clientX - offsetX}px`;
-          whatsInView.style.top = `${ev.clientY - offsetY}px`;
-        };
-
-        document.onmouseup = () => {
-          document.onmousemove = null;
-          document.onmouseup = null;
-        };
-      };
-
-      const contentContainer = document.createElement("div");
-      contentContainer.id = "WMEGeowhatsInViewContent";
-      contentContainer.style = `padding: 5px; height: calc(100% - 30px); overflow-y: auto; overflow-x: hidden; color: #ffffff; font-family: 'Arial', sans-serif; font-size: 1.0rem; text-align: left;`;
-
-      whatsInView.appendChild(header);
-      whatsInView.appendChild(contentContainer);
-
-      const mapElement = document.getElementsByTagName("wz-page-content")[0];
-      if (mapElement) {
-        mapElement.appendChild(whatsInView);
-      } else {
-        console.warn("DOM Element with the tag Name 'wz-page-content' not found.");
-        //document.body.appendChild(whatsInView);
-      }
-
-      // Add custom scrollbar styles once
-      const styleElement = document.createElement("style");
-      styleElement.innerHTML = `#WMEGeowhatsInViewMessage div::-webkit-scrollbar { width: 12px; }
-      #WMEGeowhatsInViewMessage div::-webkit-scrollbar-track { background: #333333; border-radius: 10px; }
-      #WMEGeowhatsInViewMessage div::-webkit-scrollbar-thumb { background-color: #33ff57; border-radius: 10px; border: 2px solid transparent; }
-      #WMEGeowhatsInViewMessage div::-webkit-scrollbar-thumb:hover { background-color: #28d245; }`;
-      document.head.appendChild(styleElement);
+    // First remove any existing message
+    const existingMessage = document.getElementById("WMEGeowhatsInViewMessage");
+    if (existingMessage) {
+      existingMessage.remove();
     }
 
-    // Update content of the overlay (whether newly created or existing)
-    await updateWhatsInView(whatsInView); //whatsInView JS55CT
-  }
+    // Get current map extent and visible regions
+    const wgs84Extent = wmeSDK.Map.getMapExtent();
 
-  /********************************************************************************
-   * Function: updateWhatsInView
-   *
-   * Description:
-   * This asynchronous function populates the content of a specified overlay with
-   * sorted geographical data, including states, counties, towns, and zip codes.
-   *
-   * Main Operations:
-   * - Clears existing content in the overlay's content container.
-   * - Fetches geographic data asynchronously for states, counties, towns, and zip codes.
-   * - Organizes data hierarchically (states -> counties -> towns).
-   * - Sorts each level of geographic entities alphabetically.
-   * - Constructs HTML content to display sorted geographic information.
-   * - Renders zip codes separately, sorted alphabetically.
-   *
-   * Parameters:
-   * - whatsInView: The DOM element containing the overlay message to be updated.
-   *
-   * Returns:
-   * - None
-   *
-   * Notes:
-   * Ensures data is fetched and displayed in a structured and user-friendly format within the overlay.
-   ******************************************************************************/
-  async function updateWhatsInView(whatsInView) {
-    const contentContainer = whatsInView.querySelector("#WMEGeowhatsInViewContent");
+    const viewportBbox = {
+      minLon: wgs84Extent[0],
+      minLat: wgs84Extent[1],
+      maxLon: wgs84Extent[2],
+      maxLat: wgs84Extent[3],
+    };
 
-    if (!contentContainer) {
-      console.error("Content container not found in existing message.");
-      return;
+    const visibleRegions = await geoPruner.whatsInView(viewportBbox, true);
+    console.log("Visible Regions:", visibleRegions);
+
+    // Create the message element
+    const parsingMessage = document.createElement("div");
+    parsingMessage.id = "WMEGeowhatsInViewMessage";
+    parsingMessage.style = `
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          padding: 16px 32px;
+          background: rgba(0, 0, 0, 0.8);
+          border-radius: 12px;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+          font-family: 'Arial', sans-serif;
+          font-size: 1.1rem;
+          text-align: left;
+          z-index: 2000;
+          color: #ffffff;
+          border: 2px solid #33ff57;
+          max-height: 80vh;
+          overflow-y: auto;
+      `;
+
+    // Add close button
+    const closeButton = document.createElement("span");
+    closeButton.textContent = "X";
+    closeButton.style = `
+          position: absolute;
+          top: 8px;
+          right: 12px;
+          cursor: pointer;
+      `;
+    closeButton.addEventListener("click", () => {
+      parsingMessage.remove();
+    });
+    parsingMessage.appendChild(closeButton);
+
+    // Display data from visibleRegions
+    let messageContent = "Whats in View:<br><br>";
+
+    for (let countryName in visibleRegions) {
+      const country = visibleRegions[countryName];
+      messageContent += `<div style="margin-left: 0;"><strong>* ${countryName} (${country.ISO_ALPHA2})</strong></div>`;
+
+      if (country.ISO_ALPHA2 === "US" && country.subL1) {
+        // Handle US structure with states and counties
+        for (let stateName in country.subL1) {
+          const state = country.subL1[stateName];
+          messageContent += `<div style="margin-left: 20px;">&bull; <strong>${stateName} (${state.STUSPS}) | Sub L1 | ${state.source}</strong></div>`;
+
+          if (state.subL2) {
+            for (let countyName in state.subL2) {
+              const county = state.subL2[countyName];
+              messageContent += `<div style="margin-left: 40px;">&mdash; <em>${countyName} (${county.COUNTYFP}) | Sub L2 | ${county.source}</em></div>`;
+
+              if (county.subL3) {
+                for (let subdivisionName in county.subL3) {
+                  const subdivision = county.subL3[subdivisionName];
+                  if (subdivision) {
+                    messageContent += `<div style="margin-left: 60px;">&ndash; <span style="font-weight: lighter;">${subdivisionName} (${subdivision.COUSUBFP}) | Sub L3 | ${subdivision.source}</span></div>`;
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if (country.subL1) {
+        // Handle non-US structure with only subdivisions
+        for (let subL1Name in country.subL1) {
+          const subL1data = country.subL1[subL1Name];
+          messageContent += `<div style="margin-left: 20px;">&bull; <strong>${subL1Name} (${subL1data.subL1_code} ${subL1data.subL1_id}) | Sub L1 | ${subL1data.source}</strong></div>`;
+
+          if (subL1data.subL2) {
+            for (let subL2Name in subL1data.subL2) {
+              const subL2data = subL1data.subL2[subL2Name];
+              messageContent += `<div style="margin-left: 40px;">&mdash; <em>${subL2Name} (${
+                subL2data.subL2_id || ""
+              }) | Sub L2 | ${subL2data.source}</em></div>`;
+            }
+          }
+        }
+        messageContent += "<br>";
+      }
     }
 
-    contentContainer.innerHTML = "";
-
-    const dataTypes = ["state", "county", "countysub", "zipcode"];
-    const promises = dataTypes.map(async (dataType) => {
-      try {
-        return await getArcGISdata(dataType, false);
-      } catch (error) {
-        console.error(`Error fetching data for ${dataType}:`, error);
-        return null;
-      }
-    });
-
-    const results = await Promise.all(promises);
-
-    if (!results || results.length < 4 || !results[0] || !results[1] || !results[2] || !results[3]) {
-      console.error("Failed to fetch necessary data");
-      return;
-    }
-
-    const [stateData, countyData, townData, zipData] = results;
-
-    // Organize states
-    const states = stateData.features.reduce((acc, feature) => {
-      const stateName = feature.properties.NAME;
-      const stateNum = feature.properties.STATE;
-      acc[stateNum] = { name: stateName, counties: {} };
-      return acc;
-    }, {});
-
-    // Organize counties under respective states
-    countyData.features.forEach((feature) => {
-      const countyName = feature.properties.NAME;
-      const countyNum = feature.properties.COUNTY;
-      const stateNum = feature.properties.STATE;
-
-      if (states[stateNum]) {
-        states[stateNum].counties[countyNum] = { name: countyName, towns: [] };
-      }
-    });
-
-    // Organize towns under respective counties
-    townData.features.forEach((feature) => {
-      const townName = feature.properties.NAME;
-      const countyNum = feature.properties.COUNTY;
-      const stateNum = feature.properties.STATE;
-
-      if (states[stateNum] && states[stateNum].counties[countyNum]) {
-        states[stateNum].counties[countyNum].towns.push(townName);
-      }
-    });
-
-    let messageContent = "";
-
-    // Sort states by name before processing
-    const sortedStates = Object.values(states).sort((a, b) => a.name.localeCompare(b.name));
-
-    sortedStates.forEach((state) => {
-      messageContent += `<div style="margin-left: 0;"><strong>${state.name.toUpperCase()}:</strong></div>`;
-
-      // Sort counties by name within each state
-      const sortedCounties = Object.values(state.counties).sort((a, b) => a.name.localeCompare(b.name));
-
-      sortedCounties.forEach((county) => {
-        messageContent += `<div style="margin-left: 20px;"><strong>${county.name}:</strong></div>`;
-
-        // Sort towns by name within each county
-        county.towns.sort().forEach((town) => {
-          messageContent += `<div style="margin-left: 40px;">&bull; ${town}</div>`;
-        });
-      });
-    });
-
-    messageContent += `<br><strong>ZIP CODES:</strong><br>`;
-
-    // Sort zip codes by name and add them to the content
-    const sortedZipCodes = zipData.features.sort((a, b) => {
-      const zipA = a.properties.BASENAME;
-      const zipB = b.properties.BASENAME;
-      return zipA.localeCompare(zipB);
-    });
-
-    sortedZipCodes.forEach((feature) => {
-      const zipName = feature.properties.BASENAME;
-      messageContent += `<div style="margin-left: 20px;">&bull; ${zipName}</div>`;
-    });
-
-    contentContainer.innerHTML = messageContent;
+    parsingMessage.innerHTML = messageContent;
+    parsingMessage.appendChild(closeButton);
+    document.body.appendChild(parsingMessage);
   }
 
   /**********************************************************************************************************
-   * presentFeaturesAttributesSDK
+   * presentFeaturesAttributes
    *
    * Description:
    * Displays a user interface to facilitate the selection of an attribute from a set of geographic features.
@@ -2383,9 +2544,9 @@ var geometries = function () {
    *   or reject the promise, respectively.
    * - Ensures modal visibility with a semi-transparent overlay backdrop.
    *****************************************************************************************************/
-  function presentFeaturesAttributesSDK(features, nbFeatures) {
+  function presentFeaturesAttributes(features, nbFeatures) {
     return new Promise((resolve, reject) => {
-      const allAttributes = features.map((feature) => Object.keys(feature.properties));
+      const allAttributes = features.map((feature) => Object.keys(feature.attributes));
       const attributes = Array.from(new Set(allAttributes.flat()));
 
       let attributeInput = document.createElement("div");
@@ -2401,7 +2562,8 @@ var geometries = function () {
       message.style.cssText = "margin-top: 10px; color: #777; text-align: center;";
 
       let propsContainer = document.createElement("div");
-      propsContainer.style.cssText = "overflow-y: auto; max-height: 300px; padding: 5px; background-color: #f0f0f0; border: 1px solid black; border-radius: 10px;";
+      propsContainer.style.cssText =
+        "overflow-y: auto; max-height: 300px; padding: 5px; background-color: #f0f0f0; border: 1px solid black; border-radius: 10px;";
       attributeInput.appendChild(propsContainer);
 
       features.forEach((feature, index) => {
@@ -2411,10 +2573,10 @@ var geometries = function () {
         propsContainer.appendChild(featureHeader);
 
         let propsList = document.createElement("ul");
-        Object.keys(feature.properties).forEach((key) => {
+        Object.keys(feature.attributes).forEach((key) => {
           let propItem = document.createElement("li");
           propItem.style.cssText = "list-style-type: none; padding: 2px; font-size: 0.9em;";
-          propItem.innerHTML = `<span style="color: blue;">${key}</span>: ${feature.properties[key]}`;
+          propItem.innerHTML = `<span style="color: blue;">${key}</span>: ${feature.attributes[key]}`;
           propsList.appendChild(propItem);
         });
         propsContainer.appendChild(propsList);
@@ -2426,7 +2588,8 @@ var geometries = function () {
       attributeInput.appendChild(inputLabel);
 
       let selectBox = document.createElement("select");
-      selectBox.style.cssText = "width: 90%; padding: 8px; margin-top: 5px; margin-left: 5%; margin-right: 5%; border-radius: 5px;";
+      selectBox.style.cssText =
+        "width: 90%; padding: 8px; margin-top: 5px; margin-left: 5%; margin-right: 5%; border-radius: 5px;";
       attributes.forEach((attribute) => {
         let option = document.createElement("option");
         option.value = attribute;
@@ -2449,23 +2612,23 @@ var geometries = function () {
 
       let customLabelInput = document.createElement("textarea");
       customLabelInput.placeholder = `Enter your custom label using \${attributeName} for dynamic values.
-        Feature 1
-          BridgeNumber: 01995
-          FacilityCarried: U.S. ROUTE 6
-          FeatureCrossed: BIG RIVER
-        
-        Example: (explicit new lines formatting)
-        #:\${BridgeNumber}\\n\${FacilityCarried} over\\n\${FeatureCrossed}
-        
-        Example: (multi-line formatting)
-        #:\${BridgeNumber}
-        \${FacilityCarried} over
-        \${FeatureCrossed}
-
-        Expected Output: 
-          #:01995
-          U.S. ROUTE 6 over
-          BIG RIVER`;
+          Feature 1
+            BridgeNumber: 01995
+            FacilityCarried: U.S. ROUTE 6
+            FeatureCrossed: BIG RIVER
+          
+          Example: (explicit new lines formatting)
+          #:\${BridgeNumber}\\n\${FacilityCarried} over\\n\${FeatureCrossed}
+          
+          Example: (multi-line formatting)
+          #:\${BridgeNumber}
+          \${FacilityCarried} over
+          \${FeatureCrossed}
+  
+          Expected Output: 
+            #:01995
+            U.S. ROUTE 6 over
+            BIG RIVER`;
       customLabelInput.style.cssText =
         "width: 90%; height: 300px; max-height: 300px; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical; display: none; margin-top: 5px; margin-left: 5%; margin-right: 5%;";
       attributeInput.appendChild(customLabelInput);
@@ -2475,7 +2638,8 @@ var geometries = function () {
       });
 
       let buttonsContainer = document.createElement("div");
-      buttonsContainer.style.cssText = "margin-top: 10px; display: flex; justify-content: flex-end; width: 90%; margin-left: 5%; margin-right: 5%;";
+      buttonsContainer.style.cssText =
+        "margin-top: 10px; display: flex; justify-content: flex-end; width: 90%; margin-left: 5%; margin-right: 5%;";
 
       let importButton = createButton("Import", "#8BC34A", "#689F38", "#FFFFFF", "button");
       importButton.onclick = () => {
@@ -2509,7 +2673,8 @@ var geometries = function () {
 
       let overlay = document.createElement("div");
       overlay.id = "presentFeaturesAttributesOverlay";
-      overlay.style.cssText = "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;";
+      overlay.style.cssText =
+        "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;";
       overlay.appendChild(attributeInput);
 
       document.body.appendChild(overlay);
@@ -2563,7 +2728,8 @@ var geometries = function () {
 
     let removeButton = document.createElement("button");
     removeButton.innerHTML = "X";
-    removeButton.style.cssText = "flex: none; background-color: #E57373; color: white; border: none; padding: 0; width: 16px; height: 16px; cursor: pointer; margin-left: 3px;";
+    removeButton.style.cssText =
+      "flex: none; background-color: #E57373; color: white; border: none; padding: 0; width: 16px; height: 16px; cursor: pointer; margin-left: 3px;";
     removeButton.addEventListener("click", () => removeGeometryLayer(filename));
     liObj.appendChild(removeButton);
 
@@ -2590,7 +2756,7 @@ var geometries = function () {
     }
 
     element.style.cssText = `padding: 8px 0; font-size: 1rem; border: 2px solid ${bgColor}; border-radius: 20px; cursor: pointer; background-color: ${bgColor}; color: ${textColor}; 
-    box-sizing: border-box; transition: background-color 0.3s, border-color 0.3s; font-weight: bold; text-align: center; width: 95%; margin: 3px;`;
+      box-sizing: border-box; transition: background-color 0.3s, border-color 0.3s; font-weight: bold; text-align: center; width: 95%; margin: 3px;`;
 
     element.addEventListener("mouseover", function () {
       element.style.backgroundColor = mouseoverColor;
@@ -2627,38 +2793,40 @@ var geometries = function () {
    * - Logs the changes in local storage size.
    ****************************************************************************/
   async function removeGeometryLayer(filename) {
-    const layerName = filename.replace(/[^a-z0-9_-]/gi, "_");
+    const layerName = `Geometry: ${filename}`;
+    const layers = W.map.getLayersBy("layerGroup", "wme_geometry");
+    const layerToDestroy = layers.find((layer) => layer.name === layerName);
 
+    if (!layerToDestroy) {
+      console.log(`${scriptName}: No layer found for (${filename})`);
+      return;
+    }
+
+    // Destroy the layer
+    layerToDestroy.destroy();
+
+    // Asynchronously remove the layer from IndexedDB
     try {
-      // Use the SDK to remove the layer
-      wmeSDK.Map.removeLayer({ layerName: layerName });
-      console.log(`${scriptName}: Layer removed with ID: ${layerName}`);
-
-      // Asynchronously remove the layer from IndexedDB
-      try {
-        await removeLayerFromIndexedDB(filename);
-        console.log(`${scriptName}: Removed file - ${filename} from IndexedDB.`);
-      } catch (error) {
-        console.error(`${scriptName}: Failed to remove layer ${filename} from IndexedDB:`, error);
-      }
-
-      // Sanitize filename and define IDs
-      const listItemId = filename.replace(/[^a-z0-9_-]/gi, "_");
-      const layerTogglerId = `t_${listItemId}`;
-
-      // Remove the toggler item if it exists
-      const togglerItem = document.getElementById(layerTogglerId);
-      if (togglerItem?.parentElement) {
-        togglerItem.parentElement.removeChild(togglerItem);
-      }
-
-      // Remove any list item using the listItemId
-      const listItem = document.getElementById(listItemId);
-      if (listItem) {
-        listItem.remove();
-      }
+      await removeLayerFromIndexedDB(filename);
+      console.log(`${scriptName}: Removed file - ${filename} from IndexedDB.`);
     } catch (error) {
-      console.error(`${scriptName}: Failed to remove layer or UI elements for ${filename}:`, error);
+      console.error(`${scriptName}: Failed to remove layer ${filename} from IndexedDB:`, error);
+    }
+
+    // Sanitize filename and define IDs
+    const listItemId = filename.replace(/[^a-z0-9_-]/gi, "_");
+    const layerTogglerId = `t_${listItemId}`;
+
+    // Remove the toggler item if it exists
+    const togglerItem = document.getElementById(layerTogglerId);
+    if (togglerItem?.parentElement) {
+      togglerItem.parentElement.removeChild(togglerItem);
+    }
+
+    // Remove any list item using the listItemId
+    const listItem = document.getElementById(listItemId);
+    if (listItem) {
+      listItem.remove();
     }
   }
 
@@ -2666,6 +2834,7 @@ var geometries = function () {
   async function removeLayerFromIndexedDB(filename) {
     if (!db) {
       // Check if the database is initialized
+      console.error("Database not initialized");
       return Promise.reject(new Error("Database not initialized"));
     }
 
@@ -2676,15 +2845,18 @@ var geometries = function () {
 
       // Transaction-level error handling
       transaction.onerror = function (event) {
+        console.error("Transaction error:", event.target.error);
         reject(new Error("Transaction failed during deletion"));
       };
 
       // Request-specific success and error handling
       request.onsuccess = function () {
+        console.log(`Layer with filename ${filename} successfully deleted`);
         resolve();
       };
 
       request.onerror = function (event) {
+        console.error("Error deleting layer:", event.target.error);
         reject(new Error("Failed to delete layer from database"));
       };
     });
@@ -2709,48 +2881,47 @@ var geometries = function () {
    * - Ensures debug logs are provided for tracing function execution when `debug` mode is active.
    **************************************************************/
   function createLayersFormats() {
-    const formats = {};
+    let formats = {};
     let formathelp = "";
 
     function tryCreateFormat(formatName, formatUtility) {
       try {
         if (typeof formatUtility === "function") {
+          // Test if it should be used as a constructor
           try {
             const formatInstance = new formatUtility();
             formats[formatName] = formatInstance;
           } catch (constructorError) {
+            // If it throws, it's not meant to be used as a constructor
             formats[formatName] = formatUtility;
           }
           formathelp += `${formatName} | `;
           console.log(`${scriptName}: Successfully added format: ${formatName}`);
-        } else if (formatUtility) {
-          formats[formatName] = formatUtility;
-          formathelp += `${formatName} | `;
-          console.log(`${scriptName}: Successfully added format: ${formatName}`);
         } else {
-          console.warn(`${scriptName}: ${formatName} is not a valid function or instance.`);
+          console.warn(`${scriptName}: ${formatName} is not a valid function or constructor.`);
         }
       } catch (error) {
         console.error(`${scriptName}: Error creating format ${formatName}:`, error);
       }
     }
 
-    // Add GEOJSON format
-    formats["GEOJSON"] = "GEOJSON";
-    formathelp += "GEOJSON | ";
-    console.log(`${scriptName}: Successfully added format: GEOJSON`);
-
-    // Add other formats using custom parsers or utilities
-    tryCreateFormat("KML", typeof GeoKMLer !== "undefined" && GeoKMLer);
-    tryCreateFormat("KMZ", typeof GeoKMZer !== "undefined" && GeoKMZer);
-    tryCreateFormat("GML", typeof GeoGMLer !== "undefined" && GeoGMLer);
-    tryCreateFormat("GPX", typeof GeoGPXer !== "undefined" && GeoGPXer);
-    tryCreateFormat("WKT", typeof GeoWKTer !== "undefined" && GeoWKTer);
+    if (typeof OpenLayers !== "undefined" && typeof OpenLayers.Format !== "undefined") {
+      tryCreateFormat("GEOJSON", OpenLayers.Format.GeoJSON);
+      tryCreateFormat("KML", OpenLayers.Format.KML);
+      tryCreateFormat("KMZ", GeoKMZer);
+      tryCreateFormat("GML", OpenLayers.Format.GML);
+      tryCreateFormat("GPX", OpenLayers.Format.GPX);
+      tryCreateFormat("WKT", OpenLayers.Format.WKT);
+    } else {
+      console.error(
+        `${scriptName}: OpenLayers or OpenLayers.Format for GEOJSON, KML, GML, GPX or WKT is not available.`
+      );
+    }
 
     if (typeof GeoSHPer !== "undefined") {
-      formats["ZIP"] = GeoSHPer;
-      formathelp += "ZIP(SHP,DBF,PRJ,CPG) | ";
+      formats["ZIP"] = "GeoSHPer"; // Denoting the use of the the GeoSHPer library
       console.log(`${scriptName}: Successfully added format: ZIP (shapefile)`);
+      formathelp += "ZIP(SHP,DBF,PRJ,CPG) | ";
     } else {
       console.error(`${scriptName}: Shapefile support (GeoSHPer) is not available.`);
     }
@@ -2812,7 +2983,8 @@ var geometries = function () {
       label.htmlFor = togglerSwitch.id;
 
       var togglerChildrenList = document.createElement("ul");
-      togglerChildrenList.className = "collapsible-" + layerSwitcherGroupItemName.replace("layer-switcher-", "").toUpperCase();
+      togglerChildrenList.className =
+        "collapsible-" + layerSwitcherGroupItemName.replace("layer-switcher-", "").toUpperCase();
       label.appendChild(document.createTextNode(layerGroupVisibleName));
       groupButton.addEventListener("click", layerTogglerGroupMinimizerEventHandler(iCaretDown));
       togglerSwitch.addEventListener("click", layerTogglerGroupMinimizerEventHandler(iCaretDown));
@@ -2825,7 +2997,7 @@ var geometries = function () {
       layerGroupsList.appendChild(group);
     }
 
-    if (debug) console.log(`${scriptName}: Layer Group Toggler created for ${layerGroupVisibleName}`);
+    if (debug) console.log(`${scriptName}: Group Toggler created for ${layerGroupVisibleName}`);
     return group;
   }
 
@@ -2847,61 +3019,53 @@ var geometries = function () {
    * - Attaches events to both the individual layer checkbox and the group checkbox for toggling functionality.
    * - Appends the fully configured toggler to the UI.
    * - Logs the creation of the layer toggler for debugging purposes.
-   *****************************************************************************/
-  function addLayerToggler(groupToggler, layerName, layerId) {
-    const layer_container = groupToggler.getElementsByTagName("UL")[0];
-    const layerGroupCheckbox = groupToggler.getElementsByClassName("layer-switcher-toggler-tree-category")[0].getElementsByTagName("wz-toggle-switch")[0];
-    const toggler = document.createElement("li");
-    const togglerCheckbox = document.createElement("wz-checkbox");
+   *******************************************************************************************/
+  function addLayerToggler(groupToggler, layerName, layerObj) {
+    var layer_container = groupToggler.getElementsByTagName("UL")[0];
+    var layerGroupCheckbox = groupToggler
+      .getElementsByClassName("layer-switcher-toggler-tree-category")[0]
+      .getElementsByTagName("wz-toggle-switch")[0];
+    var toggler = document.createElement("li");
+    var togglerCheckbox = document.createElement("wz-checkbox");
     togglerCheckbox.setAttribute("checked", "true");
 
     // Generate ID for togglerCheckbox using layerName
-    const togglerId = "t_" + layerId;
-    togglerCheckbox.id = togglerId;
+    var togglerId = layerName.replace(/[^a-z0-9_-]/gi, "_");
+    togglerCheckbox.id = "t_" + togglerId;
 
     togglerCheckbox.className = "hydrated";
     togglerCheckbox.appendChild(document.createTextNode(layerName));
     toggler.appendChild(togglerCheckbox);
     layer_container.appendChild(toggler);
-
-    // Attach event handlers using layerId to manage visibility with SDK
-    togglerCheckbox.addEventListener("change", layerTogglerEventHandler(layerId));
-    layerGroupCheckbox.addEventListener("change", layerTogglerGroupEventHandler(togglerCheckbox, layerId));
+    togglerCheckbox.addEventListener("change", layerTogglerEventHandler(layerObj));
+    layerGroupCheckbox.addEventListener("change", layerTogglerGroupEventHandler(togglerCheckbox, layerObj));
+    layerTogglerEventHandler(layerObj);
+    layerTogglerGroupEventHandler(togglerCheckbox, layerObj);
 
     if (debug) console.log(`${scriptName}: Layer Toggler created for ${layerName}`);
   }
 
-  function layerTogglerEventHandler(layerId) {
+  function layerTogglerEventHandler(layerObj) {
     return function () {
       const isVisible = this.checked;
-      try {
-        wmeSDK.Map.setLayerVisibility({
-          layerName: layerId,
-          visibility: isVisible,
-        });
-      } catch (error) {
-        console.error(`Failed to set visibility for layer with ID ${layerId}:`, error);
-      }
-      if (debug) console.log(`${scriptName}: Layer visibility set to ${isVisible} for layer ${layerId}`);
+      // Toggle the visibility of the layer
+      layerObj.setVisibility(isVisible);
     };
   }
 
-  function layerTogglerGroupEventHandler(groupCheckbox, layerId) {
+  function layerTogglerGroupEventHandler(groupCheckbox, layerObj) {
     return function () {
+      // Determine if the layer should be visible based on the checkboxes
       const shouldBeVisible = this.checked && groupCheckbox.checked;
-      try {
-        wmeSDK.Map.setLayerVisibility({
-          layerName: layerId,
-          visibility: shouldBeVisible,
-        });
-      } catch (error) {
-        console.error(`Failed to set group visibility for layer ${layerId}:`, error);
-      }
+
+      // Set the layer's visibility directly
+      layerObj.setVisibility(shouldBeVisible);
+
+      // Optionally adjust checkbox behavior, depending on what you want
       groupCheckbox.disabled = !this.checked;
       if (!groupCheckbox.checked) {
         groupCheckbox.disabled = false;
       }
-      if (debug) console.log(`${scriptName}: WME Geometries Group Layer visibility set to ${shouldBeVisible}`);
     };
   }
 
@@ -2913,35 +3077,60 @@ var geometries = function () {
     };
   }
 
-  /****************************************************************************************
-   * getArcGISdata
+  /******************************************************************************
+   * removeZCoordinates
    *
-   * Fetches geographic data from an ArcGIS service based on specified data types and options.
-   * This function constructs a query URL to retrieve data from the specified ArcGIS endpoint,
-   * obtaining either point or extent geometry based on the current view of the map within WME (Waze Map Editor).
+   * Description:
+   * This function processes GeoJSON data to remove Z and M coordinates, ensuring that all geometries contain only 2D coordinates (X, Y).
+   * This is particularly useful when integrating with libraries, such as OpenLayers, that may not support Z or M dimensions.
    *
    * Parameters:
-   * @param {string} [dataType="state"] - The type of geographic data to fetch, with possible values
-   * such as "state", "county", "countysub", "zipcode". Each data type corresponds to a different endpoint.
-   * @param {boolean} [returnGeo=true] - Indicates whether the function should include geometry in the response.
-   * If true, the geometry is included; if false, the function queries the current extent for visible regions.
+   * @param {Object} geojson - The GeoJSON object that contains features with geometry data that may include Z or M values.
    *
-   * Returns:
-   * @returns {Promise<Object>} - A promise that resolves to a JSON object containing the requested geographic data.
-   * The data is formatted as GeoJSON with added CRS (Coordinate Reference System) information.
-   *
-   * Workflow:
-   * - Validates the dataType argument to ensure it matches a predefined configuration.
-   * - Depending on returnGeo, sets the geometry parameter to either a center point or map extent.
-   * - Constructs a query string for the ArcGIS REST API, including necessary spatial information.
-   * - Initiates an HTTP GET request using GM_xmlhttpRequest, handling success and error responses.
-   * - Parses the GeoJSON response and attaches CRS information.
-   *
-   * Errors:
-   * - Throws an error for invalid dataType options.
-   * - Rejects the promise if JSON parsing fails or the HTTP request encounters an error.
-   ****************************************************************************************/
-  function getArcGISdata(dataType = "state", returnGeo = true) {
+   * Behavior:
+   * - Defines a helper function, `stripZ`, to recursively remove additional dimensions from coordinates.
+   * - Iterates over each feature in the GeoJSON data, applying the `stripZ` function to all geometry coordinate arrays.
+   * - Constructs and returns a new GeoJSON object with updated geometries that only include 2D coordinates.
+   * - Ensures compatibility with tools that require strictly 2D geometries by removing unnecessary dimensions.
+   *******************************************************************************************/
+  function removeZCoordinates(geojson) {
+    // Check if the input is a string and parse it
+    if (typeof geojson === "string") {
+      try {
+        geojson = JSON.parse(geojson);
+      } catch (error) {
+        throw new Error("Invalid JSON string provided.");
+      }
+    }
+
+    // Ensure it is an object and has features property
+    if (typeof geojson !== "object" || !geojson.features || !Array.isArray(geojson.features)) {
+      throw new Error("Input is not a valid GeoJSON object.");
+    }
+
+    function stripZ(coords) {
+      // For multi-dimensional arrays
+      if (Array.isArray(coords[0])) {
+        return coords.map(stripZ);
+      } else {
+        // Return only the first two coordinates
+        return coords.slice(0, 2);
+      }
+    }
+
+    return {
+      ...geojson,
+      features: geojson.features.map((feature) => ({
+        ...feature,
+        geometry: {
+          ...feature.geometry,
+          coordinates: stripZ(feature.geometry.coordinates),
+        },
+      })),
+    };
+  }
+
+  function getArcGISdata(dataType = "state") {
     // Define URLs and field names for each data type
     const CONFIG = {
       state: {
@@ -2950,15 +3139,11 @@ var geometries = function () {
       },
       county: {
         url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/1",
-        outFields: "BASENAME,NAME,STATE,COUNTY",
+        outFields: "BASENAME,NAME,STATE",
       },
       countysub: {
         url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer/1",
-        outFields: "BASENAME,NAME,STATE,COUNTY",
-      },
-      zipcode: {
-        url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1",
-        outFields: "BASENAME",
+        outFields: "BASENAME,NAME,STATE,COUNTY", // Example fields for County Subdivisions
       },
       // Add more configurations as needed
     };
@@ -2969,37 +3154,24 @@ var geometries = function () {
       throw new Error(`Invalid data type: ${dataType}`);
     }
 
-    let geometry;
-    let geometryType;
+    // Obtain the center of the map in WGS84 format.
+    const wgs84Center = wmeSDK.Map.getMapCenter(); // Get the current center coordinates of the WME map
 
-    if (returnGeo) {
-      // Obtain the center of the map in WGS84 format and Create a geometry object for it
-      const wgs84Center = wmeSDK.Map.getMapCenter(); // Get the current center coordinates of the WME map
-      geometry = {
-        x: wgs84Center.lon,
-        y: wgs84Center.lat,
-        spatialReference: { wkid: 4326 },
-      };
-      geometryType = "esriGeometryPoint";
-    } else {
-      // Get current map extent and visible regions
-      const wgs84Extent = wmeSDK.Map.getMapExtent();
-      geometry = {
-        xmin: wgs84Extent[0],
-        ymin: wgs84Extent[1],
-        xmax: wgs84Extent[2],
-        ymax: wgs84Extent[3],
-        spatialReference: { wkid: 4326 },
-      };
-      geometryType = "esriGeometryEnvelope";
-    }
+    // Create a geometry object from the map center.
+    const geometry = {
+      x: wgs84Center.lon,
+      y: wgs84Center.lat,
+      spatialReference: { wkid: 4326 },
+    };
 
     const url = `${config.url}/query?geometry=${encodeURIComponent(JSON.stringify(geometry))}`;
     const queryString =
-      `${url}&outFields=${encodeURIComponent(config.outFields)}&returnGeometry=${returnGeo}&spatialRel=esriSpatialRelIntersects` +
-      `&geometryType=${geometryType}&inSR=${geometry.spatialReference.wkid}&outSR=${geometry.spatialReference.wkid}&f=GeoJSON`;
+      `${url}&outFields=${encodeURIComponent(
+        config.outFields
+      )}&returnGeometry=true&spatialRel=esriSpatialRelIntersects` +
+      `&geometryType=esriGeometryPoint&inSR=${geometry.spatialReference.wkid}&outSR=3857&f=GeoJSON`;
 
-    if (debug) console.log(`${scriptName}: getArcGISdata(${dataType})`, queryString);
+    if (debug) console.log(`${scriptName}: getGeoDataUrl(${dataType})`, queryString);
 
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -3008,13 +3180,6 @@ var geometries = function () {
         onload: function (response) {
           try {
             const jsonResponse = JSON.parse(response.responseText);
-            // Add CRS information to the GeoJSON response
-            jsonResponse.crs = {
-              type: "name",
-              properties: {
-                name: "EPSG:4326",
-              },
-            };
             resolve(jsonResponse); // Resolve the promise with the JSON response
           } catch (error) {
             reject(new Error("Failed to parse JSON response: " + error.message));
@@ -3023,6 +3188,110 @@ var geometries = function () {
         onerror: function (error) {
           reject(new Error("Request failed: " + error.statusText));
         },
+      });
+    });
+  }
+
+  function testTransformations() {
+    const testCases = [
+      {
+        inputCRS: "EPSG:4269", // NAD83
+        //yx: false;
+        units: "degrees",
+        points: [
+          { coordinates: [-74.044541, 40.689248], expected: [-8242600.58172, 4966613.255611] },
+          { coordinates: [-122.349302, 47.620507], expected: [-13619862.010171, 6043951.303808] },
+          { coordinates: [-0.08767, 51.508046], expected: [-9759.357694, 6711658.070912] },
+          { coordinates: [151.2153, -33.8568], expected: [16833210.196152, -4009589.934223] },
+        ],
+      },
+      {
+        inputCRS: "EPSG:3035", // ETRS89 / LAEA
+        //yx: false;
+        units: "m",
+        points: [
+          { coordinates: [3756580.72351047, 2890108.68078267], expected: [255421.197404, 6250844.20951241] },
+          { coordinates: [3623203.28874355, 3203589.85042861], expected: [-9759.357694, 6711658.070912] },
+        ],
+      },
+      {
+        inputCRS: "EPSG:4267", // NAD27
+        //yx: true;
+        units: "degrees",
+        points: [
+          { coordinates: [-74.0449283, 40.689221], expected: [-8242600.58172, 4966613.255611] },
+          { coordinates: [-122.3480695, 47.6206895], expected: [-13619862.010171, 6043951.303808] },
+          { coordinates: [-87.6188847, 41.8757213], expected: [-9753699.24207752, 5142393.18430405] },
+        ],
+      },
+    ];
+
+    const targetCRS = "EPSG:900913"; // Internal projection
+    const tolerance = 0.00001; // Tolerance level
+    const tolerancePercentage = tolerance * 100; // Convert to percentage for comparison
+
+    testCases.forEach((testCase, index) => {
+      testCase.points.forEach((point, pointIndex) => {
+        const [inputX, inputY] = point.coordinates;
+        const expected = point.expected;
+
+        try {
+          // Log input points
+          console.log(
+            `Test Case ${index + 1}.${pointIndex + 1} Input Point: [${inputX.toFixed(8)}, ${inputY.toFixed(8)}]`
+          );
+
+          // Create a point ensuring it's treated as geographic
+          const pointOL = new OpenLayers.Geometry.Point(inputX, inputY); // (Lon, Lat)
+
+          // Set up projections
+          const projIn = new OpenLayers.Projection(testCase.inputCRS); // Input projection
+          const projOut = new OpenLayers.Projection(targetCRS); // Target projection
+
+          // Log the projections being used
+          console.log(`Transforming from ${testCase.inputCRS} to ${targetCRS}`);
+
+          // Transform the point correctly
+          pointOL.transform(projIn, projOut);
+
+          // Log the expected and actual output
+          console.log(`Expected: [${expected[0].toFixed(8)}, ${expected[1].toFixed(8)}]`);
+          console.log(`Got: [${pointOL.x.toFixed(8)}, ${pointOL.y.toFixed(8)}]`);
+
+          // Calculate differences
+          const olXDiff = Math.abs(expected[0] - pointOL.x);
+          const olYDiff = Math.abs(expected[1] - pointOL.y);
+
+          // Calculate percentage differences
+          const olXPercentageDiff = (olXDiff / Math.abs(expected[0] || 1)) * 100; // Avoid division by zero
+          const olYPercentageDiff = (olYDiff / Math.abs(expected[1] || 1)) * 100; // Avoid division by zero
+
+          // Log the percentage differences
+          console.log(`X Percentage Difference: ${olXPercentageDiff.toFixed(6)}%`);
+          console.log(`Y Percentage Difference: ${olYPercentageDiff.toFixed(6)}%`);
+
+          // Check if the percentage differences are within the defined tolerance
+          const olXWithinTolerance = olXPercentageDiff < tolerancePercentage;
+          const olYWithinTolerance = olYPercentageDiff < tolerancePercentage;
+
+          if (!olXWithinTolerance) {
+            console.warn(
+              `OpenLayers X coordinate percentage difference exceeds tolerance of ${tolerancePercentage.toFixed(6)}%`
+            );
+          } else {
+            console.log(`OpenLayers X coordinate is within percentage tolerance.`);
+          }
+
+          if (!olYWithinTolerance) {
+            console.warn(
+              `OpenLayers Y coordinate percentage difference exceeds tolerance of ${tolerancePercentage.toFixed(6)}%`
+            );
+          } else {
+            console.log(`OpenLayers Y coordinate is within percentage tolerance.`);
+          }
+        } catch (error) {
+          console.error(`Error processing coordinates at Test Case ${index + 1}.${pointIndex + 1}: ${error.message}`);
+        }
       });
     });
   }
