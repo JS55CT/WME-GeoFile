@@ -2387,24 +2387,36 @@ var geometries = function () {
       const attributes = Array.from(new Set(allAttributes.flat()));
 
       let attributeInput = document.createElement("div");
-      attributeInput.style.cssText =
-        "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background: #fff; border: 3px solid #ccc; border-radius: 5%; display: flex; flex-direction: column;";
-
       let title = document.createElement("label");
-      title.style.cssText = "margin-bottom: 5px; color: #333; align-self: center; font-size: 1.2em;";
+      let propsContainer = document.createElement("div");
+
+      // Determine the theme to set appropriate styles
+      const htmlElement = document.querySelector("html");
+      const theme = htmlElement.getAttribute("wz-theme") || "light";
+
+      if (theme === "dark") {
+        attributeInput.style.cssText =
+          "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background: #333; border: 3px solid #666; border-radius: 5%; display: flex; flex-direction: column;";
+        title.style.cssText = "margin-bottom: 5px; color: #ddd; align-self: center; font-size: 1.2em;";
+        propsContainer.style.cssText = "overflow-y: auto; max-height: 300px; padding: 5px; border: 3px solid #444; border-radius: 10px; ";
+      } else {
+        attributeInput.style.cssText =
+          "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background:rgb(228, 227, 227); border: 3px solid #aaa; border-radius: 5%; display: flex; flex-direction: column;";
+        title.style.cssText = "margin-bottom: 5px; color: #333; align-self: center; font-size: 1.2em;";
+        propsContainer.style.cssText = "overflow-y: auto; max-height: 300px; padding: 5px; border: 2px solid black; border-radius: 10px;";
+      }
+
       title.innerHTML = `Feature Attributes<br>Total Features: ${nbFeatures}`;
       attributeInput.appendChild(title);
 
       let message = document.createElement("p");
       message.style.cssText = "margin-top: 10px; color: #777; text-align: center;";
 
-      let propsContainer = document.createElement("div");
-      propsContainer.style.cssText = "overflow-y: auto; max-height: 300px; padding: 5px; background-color: #f0f0f0; border: 1px solid black; border-radius: 10px;";
       attributeInput.appendChild(propsContainer);
 
       features.forEach((feature, index) => {
         let featureHeader = document.createElement("label");
-        featureHeader.style.cssText = "color: #333; font-size: 1.1em;";
+        featureHeader.style.cssText = theme === "dark" ? "color: #ddd; font-size: 1.1em;" : "color: #333; font-size: 1.1em;";
         featureHeader.textContent = `Feature ${index + 1}`;
         propsContainer.appendChild(featureHeader);
 
@@ -2412,7 +2424,7 @@ var geometries = function () {
         Object.keys(feature.properties).forEach((key) => {
           let propItem = document.createElement("li");
           propItem.style.cssText = "list-style-type: none; padding: 2px; font-size: 0.9em;";
-          propItem.innerHTML = `<span style="color: blue;">${key}</span>: ${feature.properties[key]}`;
+          propItem.innerHTML = `<span style="color:rgb(53, 134, 187);">${key}</span>: ${feature.properties[key]}`;
           propsList.appendChild(propItem);
         });
         propsContainer.appendChild(propsList);
@@ -2421,6 +2433,7 @@ var geometries = function () {
       let inputLabel = document.createElement("label");
       inputLabel.style.cssText = "display: block; margin-top: 15px;";
       inputLabel.textContent = "Select Attribute to use for Label:";
+
       attributeInput.appendChild(inputLabel);
 
       let selectBox = document.createElement("select");
@@ -2432,7 +2445,6 @@ var geometries = function () {
         selectBox.appendChild(option);
       });
 
-      // Add "No Labels" and "Custom Label" options
       let noLabelsOption = document.createElement("option");
       noLabelsOption.value = "";
       noLabelsOption.textContent = "- No Labels -";
@@ -2445,27 +2457,29 @@ var geometries = function () {
 
       attributeInput.appendChild(selectBox);
 
+      // Dynamically apply inline styles to ensure precedence
       let customLabelInput = document.createElement("textarea");
+      customLabelInput.className = "custom-label-input";
       customLabelInput.placeholder = `Enter your custom label using \${attributeName} for dynamic values.
-        Feature 1
-          BridgeNumber: 01995
-          FacilityCarried: U.S. ROUTE 6
-          FeatureCrossed: BIG RIVER
-        
-        Example: (explicit new lines formatting)
-        #:\${BridgeNumber}\\n\${FacilityCarried} over\\n\${FeatureCrossed}
-        
-        Example: (multi-line formatting)
-        #:\${BridgeNumber}
-        \${FacilityCarried} over
-        \${FeatureCrossed}
+      Feature 1
+        BridgeNumber: 01995
+        FacilityCarried: U.S. ROUTE 6
+        FeatureCrossed: BIG RIVER
+      
+      Example: (explicit new lines formatting)
+      #:\${BridgeNumber}\\n\${FacilityCarried} over\\n\${FeatureCrossed}
+      
+      Example: (multi-line formatting)
+      #:\${BridgeNumber}
+      \${FacilityCarried} over
+      \${FeatureCrossed}
 
-        Expected Output: 
-          #:01995
-          U.S. ROUTE 6 over
-          BIG RIVER`;
+      Expected Output: 
+        #:01995
+        U.S. ROUTE 6 over
+        BIG RIVER`;
       customLabelInput.style.cssText =
-        "width: 90%; height: 300px; max-height: 300px; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical; display: none; margin-top: 5px; margin-left: 5%; margin-right: 5%;";
+        "color: #5DADE2 !important; width: 90%; height: 300px; max-height: 300px; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical; display: none; margin-top: 5px; margin-left: 5%; margin-right: 5%;";
       attributeInput.appendChild(customLabelInput);
 
       selectBox.addEventListener("change", () => {
@@ -2474,6 +2488,11 @@ var geometries = function () {
 
       let buttonsContainer = document.createElement("div");
       buttonsContainer.style.cssText = "margin-top: 10px; display: flex; justify-content: flex-end; width: 90%; margin-left: 5%; margin-right: 5%;";
+
+      let overlay = document.createElement("div");
+      overlay.id = "presentFeaturesAttributesOverlay";
+      overlay.style.cssText = "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;";
+      overlay.appendChild(attributeInput);
 
       let importButton = createButton("Import", "#8BC34A", "#689F38", "#FFFFFF", "button");
       importButton.onclick = () => {
@@ -2504,11 +2523,6 @@ var geometries = function () {
       buttonsContainer.appendChild(importButton);
       buttonsContainer.appendChild(cancelButton);
       attributeInput.appendChild(buttonsContainer);
-
-      let overlay = document.createElement("div");
-      overlay.id = "presentFeaturesAttributesOverlay";
-      overlay.style.cssText = "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;";
-      overlay.appendChild(attributeInput);
 
       document.body.appendChild(overlay);
     });
@@ -2587,8 +2601,11 @@ var geometries = function () {
       element.textContent = text;
     }
 
-    element.style.cssText = `padding: 8px 0; font-size: 1rem; border: 2px solid ${bgColor}; border-radius: 20px; cursor: pointer; background-color: ${bgColor}; color: ${textColor}; 
-    box-sizing: border-box; transition: background-color 0.3s, border-color 0.3s; font-weight: bold; text-align: center; width: 95%; margin: 3px;`;
+    element.style.cssText = `padding: 8px 0; font-size: 1.1rem; border: 2px solid ${bgColor}; border-radius: 20px; cursor: pointer; background-color: ${bgColor}; 
+  color: ${textColor}; box-sizing: border-box; transition: background-color 0.3s, border-color 0.3s; font-weight: bold; text-align: center; width: 95%; margin: 3px;`;
+
+    // Apply !important to forcibly set color
+    element.style.setProperty("color", textColor, "important");
 
     element.addEventListener("mouseover", function () {
       element.style.backgroundColor = mouseoverColor;
