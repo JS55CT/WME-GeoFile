@@ -4,16 +4,14 @@ WME Geometries is a File Importer that allows you to import various geometry fil
 
 ## Table of Contents
 
-- [WME Geometry (JS55CT Forked)](#wme-geometry-js55ct-forked)
+- [WME Geometries (JS55CT Forked)](#wme-geometries-js55ct-forked)
   - [Table of Contents](#table-of-contents)
-  - [About](#about)
   - [Installation](#installation)
     - [Add the Script via URL - Tampermonkey (Recommended)](#add-the-script-via-url---tampermonkey-recommended)
     - [Add the Script via URL via Greasemonkey](#add-the-script-via-url-via-greasemonkey)
   - [Usage](#usage)
   - [Enhancements](#enhancements)
   - [Attribution](#attribution)
-  - [License](#license)
 
 
 ## Installation
@@ -120,7 +118,7 @@ Built on the original code by Timbones:
 
 ## Attribution
 
-This script is based on the original `WME Geometries` script by Timbones and contributors.
+This script is based on the original "[WME Geometries](https://greasyfork.org/en/scripts/8129-wme-geometries/code?version=1284539)" script by Timbones and contributors.
 
 - **Original Author**: Timbones
   - [Greasy Fork Profile](https://greasyfork.org/users/3339)
@@ -128,7 +126,3 @@ This script is based on the original `WME Geometries` script by Timbones and con
 - **Contributors**:
   - wlodek76
   - Twister-UK
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE.md file for details.
