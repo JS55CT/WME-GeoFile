@@ -2,7 +2,7 @@
 // @name                WME Geometries (JS55CT Fork)
 // @namespace           https://github.com/JS55CT
 // @description         WME Geometries is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2025.04.26.01
+// @version             2025.05.24.00
 // @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
 // @author              JS55CT
@@ -287,21 +287,20 @@ var geometries = function () {
       tabLabel.title = `${scriptName}`;
 
       let geobox = document.createElement("div");
-      geobox.style.cssText = "padding: 5px; background-color: #fff; border: 2px solid #ddd; border-radius: 5px; box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);";
       tabPane.appendChild(geobox);
 
       let geotitle = document.createElement("div");
       geotitle.innerHTML = GM_info.script.name;
-      geotitle.style.cssText = "text-align: center; font-size: 1.1em; font-weight: bold; color: #222;";
+      geotitle.style.cssText = "text-align: center; font-size: 1.1em; font-weight: bold;";
       geobox.appendChild(geotitle);
 
       let geoversion = document.createElement("div");
       geoversion.innerHTML = "v " + GM_info.script.version;
-      geoversion.style.cssText = "text-align: center; font-size: 0.9em; color: #222;";
+      geoversion.style.cssText = "text-align: center; font-size: 0.9em;";
       geobox.appendChild(geoversion);
 
       let hr = document.createElement("hr");
-      hr.style.cssText = "margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid hsl(0, 0%, 93.5%);";
+      hr.style.cssText = "margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid;";
       geobox.appendChild(hr);
 
       geolist = document.createElement("ul");
@@ -309,7 +308,7 @@ var geometries = function () {
       geobox.appendChild(geolist);
 
       let hr1 = document.createElement("hr");
-      hr1.style.cssText = "margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid hsl(0, 0%, 93.5%);";
+      hr1.style.cssText = "margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid;";
       geobox.appendChild(hr1);
 
       let geoform = document.createElement("form");
@@ -341,7 +340,7 @@ var geometries = function () {
     | 3035 | 3414 | 4214 | 4258 | 4267 | 4283 |<br>
     | 4326 | 25832 | 26901->26923 | 27700 |<br>
     | 32601->32660 | 32701->32760 |`;
-      notes.style.cssText = "color: #555; display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
+      notes.style.cssText = "display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
       geoform.appendChild(notes);
 
       //ONLY LOAD THIS SECTION if TOP COUNTRY is the United State id = 235 */
@@ -350,15 +349,15 @@ var geometries = function () {
 
       if ((wmeTopContry.abbr || "") === "US") {
         let hrElement0 = document.createElement("hr");
-        hrElement0.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid #ddd;";
+        hrElement0.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid";
         geoform.appendChild(hrElement0);
 
         let usCensusB = document.createElement("p");
         usCensusB.innerHTML = `
-        <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_main.html" target="_blank" style="color: #555; text-decoration: underline;">
+        <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_main.html" target="_blank"; text-decoration: underline;">
           US Census Bureau:
         </a></b>`;
-        usCensusB.style.cssText = "color: #555; display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
+        usCensusB.style.cssText = "display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
         geoform.appendChild(usCensusB);
 
         // State Boundary Button
@@ -397,7 +396,7 @@ var geometries = function () {
       } // END OF United State / US Census Bureau spacific inputs
 
       let hrElement1 = document.createElement("hr");
-      hrElement1.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid #ddd;";
+      hrElement1.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid";
       geoform.appendChild(hrElement1);
 
       let inputContainer = document.createElement("div");
@@ -467,7 +466,7 @@ var geometries = function () {
     appearance: none;
     width: 15px; /* Thumb width */
     height: 15px; /* Thumb height */
-    background: #808080; /* Thumb color */
+    background: #808080;  /* Thumb color */
     cursor: pointer; /* Switch cursor to pointer when hovering the thumb */
     border-radius: 50%;
    }
@@ -637,7 +636,7 @@ var geometries = function () {
 
       // Adding a horizontal break before Label Position
       let hrElement2 = document.createElement("hr");
-      hrElement2.style.cssText = `margin: 5px 0; border: 0; border-top: 1px solid #ddd;`;
+      hrElement2.style.cssText = `margin: 5px 0; border: 0; border-top: 1px solid`;
       inputContainer.appendChild(hrElement2);
 
       // Section for label position
@@ -741,13 +740,13 @@ var geometries = function () {
 
       // Adding a horizontal break before the WKT input section
       let hrElement3 = document.createElement("hr");
-      hrElement3.style.cssText = `margin: 10px 0; border: 0; border-top: 1px solid #ddd;`; // Adjust margin and border
+      hrElement3.style.cssText = `margin: 5px 0; border: 0; border-top: 1px solid`;
       geoform.appendChild(hrElement3);
 
       // New label for the Text Area for WKT input section
       let wktSectionLabel = document.createElement("div");
       wktSectionLabel.innerHTML = 'WKT Input: (<a href="https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry" target="_blank">WKT Format</a> )';
-      wktSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 5px; display: block;`;
+      wktSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 5px; margin-top: 5px; display: block;`;
       geoform.appendChild(wktSectionLabel);
 
       // Text Area for WKT input
@@ -760,7 +759,7 @@ var geometries = function () {
       input_WKT_name.id = "input_WKT_name";
       input_WKT_name.name = "input_WKT_name";
       input_WKT_name.placeholder = "Name of WKT";
-      input_WKT_name.style.cssText = `padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; width: 100%; box-sizing: border-box;`;
+      input_WKT_name.style.cssText = `padding: 8px; font-size: 1rem; border: 2px solid; border-radius: 5px; width: 100%; box-sizing: border-box;`;
       wktContainer.appendChild(input_WKT_name);
 
       // Text Area for WKT input
@@ -768,7 +767,7 @@ var geometries = function () {
       input_WKT.id = "input_WKT";
       input_WKT.name = "input_WKT";
       input_WKT.placeholder = "POINT(X Y)  LINESTRING (X Y, X Y,...)  POLYGON(X Y, X Y, X Y,...) etc....";
-      input_WKT.style.cssText = `width: 100%; height: 10rem; min-height: 5rem; max-height: 40rem; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical;`;
+      input_WKT.style.cssText = `width: 100%; height: 10rem; min-height: 5rem; max-height: 40rem; padding: 8px; font-size: 1rem; border: 2px solid; border-radius: 5px; box-sizing: border-box; resize: vertical;`;
       // Restrict resizing to vertical
       wktContainer.appendChild(input_WKT);
 
