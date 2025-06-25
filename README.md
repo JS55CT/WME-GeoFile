@@ -1,10 +1,10 @@
-# WME Geometries (JS55CT Forked)
+# WME GeoFile
 
-WME Geometries is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME). The script enhances the mapping utilities offered by WME by overlaying geospatial data directly onto the maps.
+WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME). The script enhances the mapping utilities offered by WME by overlaying geospatial data directly onto the maps.
 
 ## Table of Contents
 
-- [WME Geometries (JS55CT Forked)](#wme-geometries-js55ct-forked)
+- [WME GeoFile](#wme-geofile)
   - [Table of Contents](#table-of-contents)
   - [Installation](#installation)
     - [Add the Script via URL - Tampermonkey (Recommended)](#add-the-script-via-url---tampermonkey-recommended)
@@ -24,7 +24,7 @@ To install this user script, you need to have a userscript manager installed in 
 - In the dashboard, click on the tab that says **"Utilities"**.
 - In the **"Import from URL"** section, paste the following URL
 
-``` https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js ```
+``` https://raw.githubusercontent.com/JS55CT/WME-GeoFile/main/WME%20GeoFile.js ```
 
 - Click on the **"Import"** button.
 - you will be directed to a page that shows the script. Click the **"Install"** button.
@@ -36,7 +36,7 @@ To install this user script, you need to have a userscript manager installed in 
 - In the script editor that opens, click on the **"Import from URL"** button.
 - Paste the following URL into the dialog that appears:
 
-``` https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js ```
+``` https://raw.githubusercontent.com/JS55CT/WME-GeoFile/main/WME%20GeoFile.js ```
 
 - Click **"OK"** and then **"Install"** the script.
 
