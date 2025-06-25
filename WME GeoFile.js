@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name                WME Geometries (JS55CT Fork)
+// @name                WME GeoFile
 // @namespace           https://github.com/JS55CT
-// @description         WME Geometries is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2025.05.24.01
-// @downloadURL         https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
-// @updateURL           https://raw.githubusercontent.com/JS55CT/WME-Geometries-JS55CT-Fork/main/WME%20Geometries.js
+// @description         WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
+// @version             2025.06.25.00
+// @downloadURL         
+// @updateURL           
 // @author              JS55CT
 // @match               https://www.waze.com/*/editor*
 // @match               https://www.waze.com/editor*
@@ -22,10 +22,14 @@
 // @connect             tigerweb.geo.census.gov
 // @grant               unsafeWindow
 // @grant               GM_xmlhttpRequest
-// @original-author     Timbones
-// @original-contributors wlodek76, Twister-UK
-// @original-source     https://greasyfork.org/en/scripts/8129-wme-geometries/code?version=1284539
 // ==/UserScript==
+
+/****************************************************************************************************
+ * This script adaptes and build off the great work of 'wme geometries'
+ * original-author:  Timbones
+ * original-contributors: wlodek76, Twister-UK
+ * Original-source:  https://greasyfork.org/en/scripts/8129-wme-geometries/code?version=128453
+ ***************************************************************************************************/
 
 /********
  * TO DO LIST:
