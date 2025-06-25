@@ -6,39 +6,10 @@ WME GeoFile is a File Importer that allows you to import various geometry files 
 
 - [WME GeoFile](#wme-geofile)
   - [Table of Contents](#table-of-contents)
-  - [Installation](#installation)
-    - [Add the Script via URL - Tampermonkey (Recommended)](#add-the-script-via-url---tampermonkey-recommended)
-    - [Add the Script via URL via Greasemonkey](#add-the-script-via-url-via-greasemonkey)
   - [Usage](#usage)
   - [Enhancements](#enhancements)
   - [Attribution](#attribution)
 
-
-## Installation
-
-To install this user script, you need to have a userscript manager installed in your browser (such as Tampermonkey or Greasemonkey).
-
-### Add the Script via URL - Tampermonkey (Recommended)
-
-- Open the Tampermonkey dashboard by clicking on the Tampermonkey icon in your browser toolbar and selecting **"Dashboard"**.
-- In the dashboard, click on the tab that says **"Utilities"**.
-- In the **"Import from URL"** section, paste the following URL
-
-``` https://raw.githubusercontent.com/JS55CT/WME-GeoFile/main/WME%20GeoFile.js ```
-
-- Click on the **"Import"** button.
-- you will be directed to a page that shows the script. Click the **"Install"** button.
-
-### Add the Script via URL via Greasemonkey
-
-- Open Greasemonkey by clicking on the Greasemonkey icon in the browser toolbar and selecting **"Manage User Scripts"**.
-- Click on the **"New User Script"** button.
-- In the script editor that opens, click on the **"Import from URL"** button.
-- Paste the following URL into the dialog that appears:
-
-``` https://raw.githubusercontent.com/JS55CT/WME-GeoFile/main/WME%20GeoFile.js ```
-
-- Click **"OK"** and then **"Install"** the script.
 
 ## Usage
 

@@ -2,9 +2,7 @@
 // @name                WME GeoFile
 // @namespace           https://github.com/JS55CT
 // @description         WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2025.06.25.00
-// @downloadURL         
-// @updateURL           
+// @version             2025.06.25.01
 // @author              JS55CT
 // @match               https://www.waze.com/*/editor*
 // @match               https://www.waze.com/editor*
@@ -20,12 +18,13 @@
 // @require             https://update.greasyfork.org/scripts/526229/1537672/GeoGMLer.js
 // @require             https://update.greasyfork.org/scripts/526996/1537647/GeoSHPer.js
 // @connect             tigerweb.geo.census.gov
-// @grant               unsafeWindow
+// @connect             greasyfork.org
+// @connect             epsg.io
 // @grant               GM_xmlhttpRequest
 // @license             Waze Development and Editing Community License
 // ==/UserScript==
 
-/*
+/************************************************************************************************************************************************************************
   This script is based on the original "[WME Geometries v1.8](https://greasyfork.org/en/scripts/8129-wme-geometries/code?version=1284539)" 
   script by Timbones and contributors.
 
@@ -60,7 +59,7 @@
      - The Software is provided "as is", without warranty of any kind, express or implied. The Licensor holds no liability for any damages or issues arising from the use of the Software.
 
   By using the Software, you agree to adhere to these terms and conditions, ensuring the Software remains beneficial and accessible to the intended community.
-*/
+*************************************************************************************************************************************************************************/
 
 /********
  * TO DO LIST:
@@ -77,10 +76,11 @@ proj4: Proj4-src.js version 2.15.0
 GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/functions used for parsing geospatial data formats.
 */
 
-var geometries = function () {
-  "use strict";
+(async function main() {
+  'use strict';
   const scriptMetadata = GM_info.script;
   const scriptName = scriptMetadata.name;
+  const downloadUrl = 'https://update.greasyfork.org/scripts/540764/WME%20GeoFile.user.js';
   let geolist;
   let debug = false;
   let formats;
@@ -104,74 +104,16 @@ var geometries = function () {
     this.orgFileext = orgFileext;
   }
 
-  let wmeSDK; // Declare wmeSDK globally
-
-  // Ensure SDK_INITIALIZED is available
-  if (unsafeWindow.SDK_INITIALIZED) {
-    unsafeWindow.SDK_INITIALIZED.then(bootstrap).catch((err) => {
-      console.error(`${scriptName}: SDK initialization failed`, err);
-    });
-  } else {
-    console.warn(`${scriptName}: SDK_INITIALIZED is undefined`);
-  }
-
-  function bootstrap() {
-    wmeSDK = unsafeWindow.getWmeSdk({
-      scriptId: scriptName.replaceAll(" ", ""),
-      scriptName: scriptName,
-    });
-
-    // Wait for both WME and WazeWrap to be ready
-    Promise.all([isWmeReady(), isWazeWrapReady()])
-      .then(() => {
-        console.log(`${scriptName}: All dependencies are ready.`);
-        // Correctly initialize formats and formathelp using the function
-        const formatResults = createLayersFormats();
-        formats = formatResults.formats;
-        formathelp = formatResults.formathelp;
-        init();
-      })
-      .catch((error) => {
-        console.error(`${scriptName}: Error during bootstrap -`, error);
-      });
-  }
-
-  function isWmeReady() {
-    return new Promise((resolve, reject) => {
-      if (wmeSDK && wmeSDK.State.isReady() && wmeSDK.Sidebar && wmeSDK.LayerSwitcher && wmeSDK.Shortcuts && wmeSDK.Events) {
-        resolve();
-      } else {
-        wmeSDK.Events.once({ eventName: "wme-ready" })
-          .then(() => {
-            if (wmeSDK.Sidebar && wmeSDK.LayerSwitcher && wmeSDK.Shortcuts && wmeSDK.Events) {
-              console.log(`${scriptName}: WME is fully ready now.`);
-              resolve();
-            } else {
-              reject(`${scriptName}: Some SDK components are not loaded.`);
-            }
-          })
-          .catch((error) => {
-            console.error(`${scriptName}: Error while waiting for WME to be ready:`, error);
-            reject(error);
-          });
-      }
-    });
-  }
-
-  function isWazeWrapReady() {
-    return new Promise((resolve, reject) => {
-      (function check(tries = 0) {
-        if (unsafeWindow.WazeWrap && unsafeWindow.WazeWrap.Ready) {
-          resolve();
-        } else if (tries < 1000) {
-          setTimeout(() => {
-            check(++tries);
-          }, 500);
-        } else {
-          reject(`${scriptName}: WazeWrap took too long to load.`);
-        }
-      })();
-    });
+  let wmeSDK;
+  try {
+    wmeSDK = await bootstrap({ scriptUpdateMonitor: { downloadUrl } });
+    console.log(`${scriptName}: Bootstrap complete: All dependencies are ready.`);
+    const formatResults = createLayersFormats();
+    formats = formatResults.formats;
+    formathelp = formatResults.formathelp;
+    init();
+  } catch (error) {
+    console.error('Error during bootstrap initialization:', error);
   }
 
   /*********************************************************************
@@ -200,16 +142,19 @@ var geometries = function () {
   async function loadLayers() {
     console.log(`${scriptName}: Loading Saved Layers...`);
 
+    /******** Disabling this section as I don't want to mess up WME GEOMETRIES script  **********/
     // Check local storage for any legacy layers
+    /*
     if (localStorage.WMEGeoLayers !== undefined) {
-      WazeWrap.Alerts.info(scriptName, "Old layers were found in local storage. These will be deleted. Please reload your files to convert them to IndexedDB storage.");
-      localStorage.removeItem("WMEGeoLayers");
+      WazeWrap.Alerts.info(scriptName, 'Old layers were found in local storage. These will be deleted. Please reload your files to convert them to IndexedDB storage.');
+      localStorage.removeItem('WMEGeoLayers');
       console.log(`${scriptName}: Old layers in local storage have been deleted. Please reload your files.`);
     }
+    */
 
     // Continue by loading layers stored in IndexedDB
-    const transaction = db.transaction(["layers"], "readonly");
-    const store = transaction.objectStore("layers");
+    const transaction = db.transaction(['layers'], 'readonly');
+    const store = transaction.objectStore('layers');
     const request = store.getAll();
 
     return new Promise((resolve, reject) => {
@@ -244,7 +189,7 @@ var geometries = function () {
 
       request.onerror = function (event) {
         console.error(`${scriptName}: Error loading layers from IndexedDB`, event.target.error);
-        reject(new Error("Failed to load layers from database"));
+        reject(new Error('Failed to load layers from database'));
       };
     });
   }
@@ -269,8 +214,8 @@ var geometries = function () {
    * @returns {Promise<Object|null>} - Resolves with the decompressed layer object if successful, or `null` if not found.
    *************************************************************************/
   async function loadLayer(filename) {
-    const transaction = db.transaction(["layers"], "readonly");
-    const store = transaction.objectStore("layers");
+    const transaction = db.transaction(['layers'], 'readonly');
+    const store = transaction.objectStore('layers');
     const request = store.get(filename);
 
     return new Promise((resolve, reject) => {
@@ -286,8 +231,8 @@ var geometries = function () {
       };
 
       request.onerror = function (event) {
-        console.error("Error retrieving layer:", event.target.error);
-        reject(new Error("Failed to fetch layer data"));
+        console.error('Error retrieving layer:', event.target.error);
+        reject(new Error('Failed to fetch layer data'));
       };
     });
   }
@@ -317,154 +262,163 @@ var geometries = function () {
     console.log(`${scriptName}: Loading User Interface ...`);
 
     wmeSDK.Sidebar.registerScriptTab().then(({ tabLabel, tabPane }) => {
-      tabLabel.textContent = "GEO";
+      tabLabel.textContent = 'GEO';
       tabLabel.title = `${scriptName}`;
 
-      let geobox = document.createElement("div");
+      let geobox = document.createElement('div');
       tabPane.appendChild(geobox);
 
-      let geotitle = document.createElement("div");
+      let geotitle = document.createElement('div');
       geotitle.innerHTML = GM_info.script.name;
-      geotitle.style.cssText = "text-align: center; font-size: 1.1em; font-weight: bold;";
+      geotitle.style.cssText = 'text-align: center; font-size: 1.1em; font-weight: bold;';
       geobox.appendChild(geotitle);
 
-      let geoversion = document.createElement("div");
-      geoversion.innerHTML = "v " + GM_info.script.version;
-      geoversion.style.cssText = "text-align: center; font-size: 0.9em;";
+      let geoversion = document.createElement('div');
+      geoversion.innerHTML = 'v ' + GM_info.script.version;
+      geoversion.style.cssText = 'text-align: center; font-size: 0.9em;';
       geobox.appendChild(geoversion);
 
-      let hr = document.createElement("hr");
-      hr.style.cssText = "margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid;";
+      let hr = document.createElement('hr');
+      hr.style.cssText = 'margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid;';
       geobox.appendChild(hr);
 
-      geolist = document.createElement("ul");
-      geolist.style.cssText = "margin: 5px 0; padding: 5px;";
+      geolist = document.createElement('ul');
+      geolist.style.cssText = 'margin: 5px 0; padding: 5px;';
       geobox.appendChild(geolist);
 
-      let hr1 = document.createElement("hr");
-      hr1.style.cssText = "margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid;";
+      let hr1 = document.createElement('hr');
+      hr1.style.cssText = 'margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid;';
       geobox.appendChild(hr1);
 
-      let geoform = document.createElement("form");
-      geoform.style.cssText = "display: flex; flex-direction: column; gap: 0px;";
-      geoform.id = "geoform";
+      let geoform = document.createElement('form');
+      geoform.style.cssText = 'display: flex; flex-direction: column; gap: 0px;';
+      geoform.id = 'geoform';
       geobox.appendChild(geoform);
 
-      let fileContainer = document.createElement("div");
-      fileContainer.style.cssText = "position: relative; display: inline-block;";
+      let fileContainer = document.createElement('div');
+      fileContainer.style.cssText = 'position: relative; display: inline-block;';
 
-      let inputfile = document.createElement("input");
-      inputfile.type = "file";
-      inputfile.id = "GeometryFile";
-      inputfile.title = ".geojson, .gml or .wkt";
-      inputfile.style.cssText = "opacity: 0; position: absolute; top: 0; left: 0; width: 95%; height: 100%; cursor: pointer; pointer-events: none;";
+      let inputfile = document.createElement('input');
+      inputfile.type = 'file';
+      inputfile.id = 'GeometryFile';
+      inputfile.title = '.geojson, .gml or .wkt';
+      inputfile.style.cssText = 'opacity: 0; position: absolute; top: 0; left: 0; width: 95%; height: 100%; cursor: pointer; pointer-events: none;';
       fileContainer.appendChild(inputfile);
 
-      let customLabel = createButton("Import GEO File", "#8BC34A", "#689F38", "#FFFFFF", "label", "GeometryFile");
+      let customLabel = createButton('Import GEO File', '#8BC34A', '#689F38', '#FFFFFF', 'label', 'GeometryFile');
       fileContainer.appendChild(customLabel);
       geoform.appendChild(fileContainer);
 
-      inputfile.addEventListener("change", addGeometryLayer, false);
+      inputfile.addEventListener('change', addGeometryLayer, false);
 
-      let notes = document.createElement("p");
+      let notes = document.createElement('p');
       notes.innerHTML = `
     <b>Formats:</b><br>
     ${formathelp}<br>
-    <b>EPSG:</b> <br>
+    <b>EPSG:</b> Default codes supported:<br>
     | 3035 | 3414 | 4214 | 4258 | 4267 | 4283 |<br>
     | 4326 | 25832 | 26901->26923 | 27700 |<br>
-    | 32601->32660 | 32701->32760 |`;
-      notes.style.cssText = "display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
+    | 32601->32660 | 32701->32760 |<br>
+    | All others dynamically sourced from espg.io |`;
+      notes.style.cssText = 'display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;';
       geoform.appendChild(notes);
 
-      //ONLY LOAD THIS SECTION if TOP COUNTRY is the United State id = 235 */
-      const wmeTopContry = wmeSDK.DataModel.Countries.getTopCountry();
-      console.log(`${scriptName}: Top Level Coutry = ${wmeTopContry.name} | ${wmeTopContry.abbr}`);
+      //ONLY LOAD THIS SECTION if TOP COUNTRY is the Check for US and its territories */
+      try {
+        const wmeTopCountry = wmeSDK.DataModel.Countries.getTopCountry();
+        if (debug) console.log(`${scriptName}: Top Level Country `, wmeTopCountry);
 
-      if ((wmeTopContry.abbr || "") === "US") {
-        let hrElement0 = document.createElement("hr");
-        hrElement0.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid";
-        geoform.appendChild(hrElement0);
+        if (wmeTopCountry && ['US', 'GQ', 'RQ', 'VQ', 'AQ', 'CQ'].includes(wmeTopCountry.abbr)) {
+          console.log(`${scriptName}: Top Level Country = ${wmeTopCountry.name} | ${wmeTopCountry.abbr}`);
 
-        let usCensusB = document.createElement("p");
-        usCensusB.innerHTML = `
+          let hrElement0 = document.createElement('hr');
+          hrElement0.style.cssText = 'margin: 5px 0; border: 0; border-top: 1px solid';
+          geoform.appendChild(hrElement0);
+
+          let usCensusB = document.createElement('p');
+          usCensusB.innerHTML = `
         <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_main.html" target="_blank"; text-decoration: underline;">
           US Census Bureau:
         </a></b>`;
-        usCensusB.style.cssText = "display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;";
-        geoform.appendChild(usCensusB);
+          usCensusB.style.cssText = 'display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;';
+          geoform.appendChild(usCensusB);
 
-        // State Boundary Button
-        const stateBoundaryButtonContainer = createButton("Draw State Boundary", "#E57373", "#D32F2F", "#FFFFFF", "input");
-        stateBoundaryButtonContainer.onclick = () => {
-          drawBoundary("state");
-        };
-        geoform.appendChild(stateBoundaryButtonContainer);
+          // State Boundary Button
+          const stateBoundaryButtonContainer = createButton('Draw State Boundary', '#E57373', '#D32F2F', '#FFFFFF', 'input');
+          stateBoundaryButtonContainer.onclick = () => {
+            drawBoundary('state');
+          };
+          geoform.appendChild(stateBoundaryButtonContainer);
 
-        // County Boundary Button
-        const countyBoundaryButtonContainer = createButton("Draw County Boundary", "#8BC34A", "#689F38", "#FFFFFF", "input");
-        countyBoundaryButtonContainer.onclick = () => {
-          drawBoundary("county");
-        };
-        geoform.appendChild(countyBoundaryButtonContainer);
+          // County Boundary Button
+          const countyBoundaryButtonContainer = createButton('Draw County Boundary', '#8BC34A', '#689F38', '#FFFFFF', 'input');
+          countyBoundaryButtonContainer.onclick = () => {
+            drawBoundary('county');
+          };
+          geoform.appendChild(countyBoundaryButtonContainer);
 
-        // countySub Boundary Button
-        const countySubBoundaryButtonContainer = createButton("Draw County Sub Boundary", "#42A5F5", "#1976D2", "#FFFFFF", "input");
-        countySubBoundaryButtonContainer.onclick = () => {
-          drawBoundary("countysub");
-        };
-        geoform.appendChild(countySubBoundaryButtonContainer);
+          // countySub Boundary Button
+          const countySubBoundaryButtonContainer = createButton('Draw County Sub Boundary', '#42A5F5', '#1976D2', '#FFFFFF', 'input');
+          countySubBoundaryButtonContainer.onclick = () => {
+            drawBoundary('countysub');
+          };
+          geoform.appendChild(countySubBoundaryButtonContainer);
 
-        // ZipCode Boundary Button
-        const zipCodeBoundaryButtonContainer = createButton("Draw Zip Code Boundary", "#6F66D2", "#645CBD", "#FFFFFF", "input");
-        zipCodeBoundaryButtonContainer.onclick = () => {
-          drawBoundary("zipcode");
-        };
-        geoform.appendChild(zipCodeBoundaryButtonContainer);
+          // ZipCode Boundary Button
+          const zipCodeBoundaryButtonContainer = createButton('Draw Zip Code Boundary', '#6F66D2', '#645CBD', '#FFFFFF', 'input');
+          zipCodeBoundaryButtonContainer.onclick = () => {
+            drawBoundary('zipcode');
+          };
+          geoform.appendChild(zipCodeBoundaryButtonContainer);
 
-        const whatsInViewButtonContainer = createButton("Whats in View", "#BA68C8", "#9C27B0", "#FFFFFF", "input");
-        whatsInViewButtonContainer.onclick = () => {
-          whatsInView();
-        };
-        geoform.appendChild(whatsInViewButtonContainer);
-      } // END OF United State / US Census Bureau spacific inputs
+          const whatsInViewButtonContainer = createButton('Whats in View', '#BA68C8', '#9C27B0', '#FFFFFF', 'input');
+          whatsInViewButtonContainer.onclick = () => {
+            whatsInView();
+          };
+          geoform.appendChild(whatsInViewButtonContainer);
+        } else {
+          console.warn(`${scriptName}: Unable to determine the top country. The map might be zoomed out too far.`);
+        }
+      } catch (error) {
+        console.warn(`${scriptName}: Unable to determine top country. Reason:`, error);
+      } // END OF Check for US and its territories / US Census Bureau spacific inputs
 
-      let hrElement1 = document.createElement("hr");
-      hrElement1.style.cssText = "margin: 5px 0; border: 0; border-top: 1px solid";
+      let hrElement1 = document.createElement('hr');
+      hrElement1.style.cssText = 'margin: 5px 0; border: 0; border-top: 1px solid';
       geoform.appendChild(hrElement1);
 
-      let inputContainer = document.createElement("div");
-      inputContainer.style.cssText = "display: flex; flex-direction: column; gap: 5px; margin-top: 10px;";
+      let inputContainer = document.createElement('div');
+      inputContainer.style.cssText = 'display: flex; flex-direction: column; gap: 5px; margin-top: 10px;';
 
-      let colorFontSizeRow = document.createElement("div");
-      colorFontSizeRow.style.cssText = "display: flex; justify-content: normal; align-items: center; gap: 0px;";
+      let colorFontSizeRow = document.createElement('div');
+      colorFontSizeRow.style.cssText = 'display: flex; justify-content: normal; align-items: center; gap: 0px;';
 
-      let input_color_label = document.createElement("label");
-      input_color_label.setAttribute("for", "color");
-      input_color_label.innerHTML = "Color: ";
-      input_color_label.style.cssText = "font-weight: normal; flex-shrink: 0; margin-right: 5px;";
+      let input_color_label = document.createElement('label');
+      input_color_label.setAttribute('for', 'color');
+      input_color_label.innerHTML = 'Color: ';
+      input_color_label.style.cssText = 'font-weight: normal; flex-shrink: 0; margin-right: 5px;';
 
-      let input_color = document.createElement("input");
-      input_color.type = "color";
-      input_color.id = "color";
-      input_color.value = "#00bfff";
-      input_color.name = "color";
-      input_color.style.cssText = "width: 60px;";
+      let input_color = document.createElement('input');
+      input_color.type = 'color';
+      input_color.id = 'color';
+      input_color.value = '#00bfff';
+      input_color.name = 'color';
+      input_color.style.cssText = 'width: 60px;';
 
-      let input_font_size_label = document.createElement("label");
-      input_font_size_label.setAttribute("for", "font_size");
-      input_font_size_label.innerHTML = "Font Size: ";
-      input_font_size_label.style.cssText = "margin-left: 40px; font-weight: normal; flex-shrink: 0; margin-right: 5px;";
+      let input_font_size_label = document.createElement('label');
+      input_font_size_label.setAttribute('for', 'font_size');
+      input_font_size_label.innerHTML = 'Font Size: ';
+      input_font_size_label.style.cssText = 'margin-left: 40px; font-weight: normal; flex-shrink: 0; margin-right: 5px;';
 
-      let input_font_size = document.createElement("input");
-      input_font_size.type = "number";
-      input_font_size.id = "font_size";
-      input_font_size.min = "0";
-      input_font_size.max = "20";
-      input_font_size.name = "font_size";
-      input_font_size.value = "12";
-      input_font_size.step = "1.0";
-      input_font_size.style.cssText = "width: 50px; text-align: center;";
+      let input_font_size = document.createElement('input');
+      input_font_size.type = 'number';
+      input_font_size.id = 'font_size';
+      input_font_size.min = '0';
+      input_font_size.max = '20';
+      input_font_size.name = 'font_size';
+      input_font_size.value = '12';
+      input_font_size.step = '1.0';
+      input_font_size.style.cssText = 'width: 50px; text-align: center;';
 
       colorFontSizeRow.appendChild(input_color_label);
       colorFontSizeRow.appendChild(input_color);
@@ -473,27 +427,27 @@ var geometries = function () {
       inputContainer.appendChild(colorFontSizeRow);
 
       // Row for fill opacity input
-      let fillOpacityRow = document.createElement("div");
+      let fillOpacityRow = document.createElement('div');
       fillOpacityRow.style.cssText = `display: flex; flex-direction: column;`;
 
       // Polygon Fill Opacity
-      let input_fill_opacity_label = document.createElement("label");
-      input_fill_opacity_label.setAttribute("for", "fill_opacity");
+      let input_fill_opacity_label = document.createElement('label');
+      input_fill_opacity_label.setAttribute('for', 'fill_opacity');
       input_fill_opacity_label.innerHTML = `Fill Opacity % [${(0.05 * 100).toFixed()}]`;
       input_fill_opacity_label.style.cssText = `font-weight: normal;`;
 
-      let input_fill_opacity = document.createElement("input");
-      input_fill_opacity.type = "range";
-      input_fill_opacity.id = "fill_opacity";
-      input_fill_opacity.min = "0";
-      input_fill_opacity.max = "1";
-      input_fill_opacity.step = "0.01";
-      input_fill_opacity.value = "0.05";
-      input_fill_opacity.name = "fill_opacity";
+      let input_fill_opacity = document.createElement('input');
+      input_fill_opacity.type = 'range';
+      input_fill_opacity.id = 'fill_opacity';
+      input_fill_opacity.min = '0';
+      input_fill_opacity.max = '1';
+      input_fill_opacity.step = '0.01';
+      input_fill_opacity.value = '0.05';
+      input_fill_opacity.name = 'fill_opacity';
       input_fill_opacity.style.cssText = `width: 100%; appearance: none; height: 12px; border-radius: 5px; outline: none;`;
 
       // Thumb styling via CSS pseudo-elements
-      const styleElement = document.createElement("style");
+      const styleElement = document.createElement('style');
       styleElement.textContent = `
     input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none;
@@ -535,7 +489,7 @@ var geometries = function () {
       updateOpacityInputStyles();
 
       // Event listener to update the label dynamically
-      input_fill_opacity.addEventListener("input", function () {
+      input_fill_opacity.addEventListener('input', function () {
         input_fill_opacity_label.innerHTML = `Fill Opacity % [${Math.round(this.value * 100)}]`;
         updateOpacityInputStyles();
       });
@@ -548,32 +502,32 @@ var geometries = function () {
       inputContainer.appendChild(fillOpacityRow);
 
       // Section for line stroke settings
-      let lineStrokeSection = document.createElement("div");
+      let lineStrokeSection = document.createElement('div');
       lineStrokeSection.style.cssText = `display: flex; flex-direction: column; margin-top: 10px;`;
 
       // Line stroke section label
-      let lineStrokeSectionLabel = document.createElement("span");
-      lineStrokeSectionLabel.innerText = "Line Stroke Settings:";
+      let lineStrokeSectionLabel = document.createElement('span');
+      lineStrokeSectionLabel.innerText = 'Line Stroke Settings:';
       lineStrokeSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 10px;`;
       lineStrokeSection.appendChild(lineStrokeSectionLabel);
 
       // Line Stroke Size
-      let lineStrokeSizeRow = document.createElement("div");
+      let lineStrokeSizeRow = document.createElement('div');
       lineStrokeSizeRow.style.cssText = `display: flex; align-items: center;`;
 
-      let line_stroke_size_label = document.createElement("label");
-      line_stroke_size_label.setAttribute("for", "line_size");
-      line_stroke_size_label.innerHTML = "Size:";
+      let line_stroke_size_label = document.createElement('label');
+      line_stroke_size_label.setAttribute('for', 'line_size');
+      line_stroke_size_label.innerHTML = 'Size:';
       line_stroke_size_label.style.cssText = `font-weight: normal; margin-right: 5px;`;
 
-      let line_stroke_size = document.createElement("input");
-      line_stroke_size.type = "number";
-      line_stroke_size.id = "line_size";
-      line_stroke_size.min = "0";
-      line_stroke_size.max = "10";
-      line_stroke_size.name = "line_size";
-      line_stroke_size.value = "1";
-      line_stroke_size.step = ".5";
+      let line_stroke_size = document.createElement('input');
+      line_stroke_size.type = 'number';
+      line_stroke_size.id = 'line_size';
+      line_stroke_size.min = '0';
+      line_stroke_size.max = '10';
+      line_stroke_size.name = 'line_size';
+      line_stroke_size.value = '1';
+      line_stroke_size.step = '.5';
       line_stroke_size.style.cssText = `width: 50px;`;
 
       lineStrokeSizeRow.appendChild(line_stroke_size_label);
@@ -581,36 +535,36 @@ var geometries = function () {
       lineStrokeSection.appendChild(lineStrokeSizeRow);
 
       // Line Stroke Style
-      let lineStrokeStyleRow = document.createElement("div");
+      let lineStrokeStyleRow = document.createElement('div');
       lineStrokeStyleRow.style.cssText = `display: flex; align-items: center; gap: 10px; margin-top: 5px; margin-bottom: 5px;`;
 
-      let line_stroke_types_label = document.createElement("span");
-      line_stroke_types_label.innerText = "Style:";
+      let line_stroke_types_label = document.createElement('span');
+      line_stroke_types_label.innerText = 'Style:';
       line_stroke_types_label.style.cssText = `font-weight: normal;`;
       lineStrokeStyleRow.appendChild(line_stroke_types_label);
 
       let line_stroke_types = [
-        { id: "solid", value: "Solid" },
-        { id: "dash", value: "Dash" },
-        { id: "dot", value: "Dot" },
+        { id: 'solid', value: 'Solid' },
+        { id: 'dash', value: 'Dash' },
+        { id: 'dot', value: 'Dot' },
       ];
       for (const type of line_stroke_types) {
-        let radioContainer = document.createElement("div");
+        let radioContainer = document.createElement('div');
         radioContainer.style.cssText = `display: flex; align-items: center; gap: 5px;`;
 
-        let radio = document.createElement("input");
-        radio.type = "radio";
+        let radio = document.createElement('input');
+        radio.type = 'radio';
         radio.id = type.id;
         radio.value = type.id;
-        radio.name = "line_stroke_style";
+        radio.name = 'line_stroke_style';
         radio.style.cssText = `margin: 0; vertical-align: middle;`;
 
-        if (type.id === "solid") {
+        if (type.id === 'solid') {
           radio.checked = true;
         }
 
-        let label = document.createElement("label");
-        label.setAttribute("for", radio.id);
+        let label = document.createElement('label');
+        label.setAttribute('for', radio.id);
         label.innerHTML = type.value;
         label.style.cssText = `font-weight: normal; margin: 0; line-height: 1;`;
 
@@ -624,22 +578,22 @@ var geometries = function () {
       inputContainer.appendChild(lineStrokeSection);
 
       // Line Stroke Opacity
-      let lineStrokeOpacityRow = document.createElement("div");
+      let lineStrokeOpacityRow = document.createElement('div');
       lineStrokeOpacityRow.style.cssText = `display: flex; flex-direction: column;`;
 
-      let line_stroke_opacity_label = document.createElement("label");
-      line_stroke_opacity_label.setAttribute("for", "line_stroke_opacity");
-      line_stroke_opacity_label.innerHTML = "Opacity % [100]";
+      let line_stroke_opacity_label = document.createElement('label');
+      line_stroke_opacity_label.setAttribute('for', 'line_stroke_opacity');
+      line_stroke_opacity_label.innerHTML = 'Opacity % [100]';
       line_stroke_opacity_label.style.cssText = `font-weight: normal;`;
 
-      let line_stroke_opacity = document.createElement("input");
-      line_stroke_opacity.type = "range";
-      line_stroke_opacity.id = "line_stroke_opacity";
-      line_stroke_opacity.min = "0";
-      line_stroke_opacity.max = "1";
-      line_stroke_opacity.step = ".05";
-      line_stroke_opacity.value = "1";
-      line_stroke_opacity.name = "line_stroke_opacity";
+      let line_stroke_opacity = document.createElement('input');
+      line_stroke_opacity.type = 'range';
+      line_stroke_opacity.id = 'line_stroke_opacity';
+      line_stroke_opacity.min = '0';
+      line_stroke_opacity.max = '1';
+      line_stroke_opacity.step = '.05';
+      line_stroke_opacity.value = '1';
+      line_stroke_opacity.name = 'line_stroke_opacity';
       line_stroke_opacity.style.cssText = `width: 100%; appearance: none; height: 12px; border-radius: 5px; outline: none;`;
 
       const updateLineOpacityInputStyles = () => {
@@ -652,12 +606,12 @@ var geometries = function () {
 
       updateLineOpacityInputStyles();
 
-      line_stroke_opacity.addEventListener("input", function () {
+      line_stroke_opacity.addEventListener('input', function () {
         line_stroke_opacity_label.innerHTML = `Opacity % [${Math.round(this.value * 100)}]`;
         updateLineOpacityInputStyles();
       });
 
-      input_color.addEventListener("input", () => {
+      input_color.addEventListener('input', () => {
         updateLineOpacityInputStyles();
         updateOpacityInputStyles();
       });
@@ -669,55 +623,55 @@ var geometries = function () {
       inputContainer.appendChild(lineStrokeOpacityRow);
 
       // Adding a horizontal break before Label Position
-      let hrElement2 = document.createElement("hr");
+      let hrElement2 = document.createElement('hr');
       hrElement2.style.cssText = `margin: 5px 0; border: 0; border-top: 1px solid`;
       inputContainer.appendChild(hrElement2);
 
       // Section for label position
-      let labelPositionSection = document.createElement("div");
+      let labelPositionSection = document.createElement('div');
       labelPositionSection.style.cssText = `display: flex; flex-direction: column;`;
 
       // Label position section label
-      let labelPositionSectionLabel = document.createElement("span");
-      labelPositionSectionLabel.innerText = "Label Position Settings:";
+      let labelPositionSectionLabel = document.createElement('span');
+      labelPositionSectionLabel.innerText = 'Label Position Settings:';
       labelPositionSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 5px;`;
       labelPositionSection.appendChild(labelPositionSectionLabel);
 
       // Container for horizontal and vertical positioning options
-      let labelPositionContainer = document.createElement("div");
+      let labelPositionContainer = document.createElement('div');
       labelPositionContainer.style.cssText = `display: flex; margin-left: 10px; gap: 80px;`;
 
       // Column for horizontal alignment
-      let horizontalColumn = document.createElement("div");
+      let horizontalColumn = document.createElement('div');
       horizontalColumn.style.cssText = `display: flex; flex-direction: column; gap: 5px;`;
 
-      let horizontalLabel = document.createElement("span");
-      horizontalLabel.innerText = "Horizontal:";
+      let horizontalLabel = document.createElement('span');
+      horizontalLabel.innerText = 'Horizontal:';
       horizontalLabel.style.cssText = `font-weight: normal;`;
       horizontalColumn.appendChild(horizontalLabel);
 
       let label_pos_horizontal = [
-        { id: "l", value: "Left" },
-        { id: "c", value: "Center" },
-        { id: "r", value: "Right" },
+        { id: 'l', value: 'Left' },
+        { id: 'c', value: 'Center' },
+        { id: 'r', value: 'Right' },
       ];
       for (const pos of label_pos_horizontal) {
-        let radioHorizontalRow = document.createElement("div");
+        let radioHorizontalRow = document.createElement('div');
         radioHorizontalRow.style.cssText = `display: flex; align-items: center; gap: 5px;`;
 
-        let radio = document.createElement("input");
-        radio.type = "radio";
+        let radio = document.createElement('input');
+        radio.type = 'radio';
         radio.id = pos.id;
         radio.value = pos.id;
-        radio.name = "label_pos_horizontal";
+        radio.name = 'label_pos_horizontal';
         radio.style.cssText = `margin: 0; vertical-align: middle;`;
 
-        let label = document.createElement("label");
-        label.setAttribute("for", radio.id);
+        let label = document.createElement('label');
+        label.setAttribute('for', radio.id);
         label.innerHTML = pos.value;
         label.style.cssText = `font-weight: normal; margin: 0; line-height: 1;`;
 
-        if (radio.id === "c") {
+        if (radio.id === 'c') {
           radio.checked = true;
         }
 
@@ -727,36 +681,36 @@ var geometries = function () {
       }
 
       // Column for vertical alignment
-      let verticalColumn = document.createElement("div");
+      let verticalColumn = document.createElement('div');
       verticalColumn.style.cssText = `display: flex; flex-direction: column; gap: 5px;`;
 
-      let verticalLabel = document.createElement("span");
-      verticalLabel.innerText = "Vertical:";
+      let verticalLabel = document.createElement('span');
+      verticalLabel.innerText = 'Vertical:';
       verticalLabel.style.cssText = `font-weight: normal;`;
       verticalColumn.appendChild(verticalLabel);
 
       let label_pos_vertical = [
-        { id: "t", value: "Top" },
-        { id: "m", value: "Middle" },
-        { id: "b", value: "Bottom" },
+        { id: 't', value: 'Top' },
+        { id: 'm', value: 'Middle' },
+        { id: 'b', value: 'Bottom' },
       ];
       for (const pos of label_pos_vertical) {
-        let radioVerticalRow = document.createElement("div");
+        let radioVerticalRow = document.createElement('div');
         radioVerticalRow.style.cssText = `display: flex; align-items: center; gap: 5px;`;
 
-        let radio = document.createElement("input");
-        radio.type = "radio";
+        let radio = document.createElement('input');
+        radio.type = 'radio';
         radio.id = pos.id;
         radio.value = pos.id;
-        radio.name = "label_pos_vertical";
+        radio.name = 'label_pos_vertical';
         radio.style.cssText = `margin: 0; vertical-align: middle;`;
 
-        let label = document.createElement("label");
-        label.setAttribute("for", radio.id);
+        let label = document.createElement('label');
+        label.setAttribute('for', radio.id);
         label.innerHTML = pos.value;
         label.style.cssText = `font-weight: normal; margin: 0; line-height: 1;`;
 
-        if (radio.id === "m") {
+        if (radio.id === 'm') {
           radio.checked = true;
         }
 
@@ -773,97 +727,97 @@ var geometries = function () {
       geoform.appendChild(inputContainer);
 
       // Adding a horizontal break before the WKT input section
-      let hrElement3 = document.createElement("hr");
+      let hrElement3 = document.createElement('hr');
       hrElement3.style.cssText = `margin: 5px 0; border: 0; border-top: 1px solid`;
       geoform.appendChild(hrElement3);
 
       // New label for the Text Area for WKT input section
-      let wktSectionLabel = document.createElement("div");
+      let wktSectionLabel = document.createElement('div');
       wktSectionLabel.innerHTML = 'WKT Input: (<a href="https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry" target="_blank">WKT Format</a> )';
       wktSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 5px; margin-top: 5px; display: block;`;
       geoform.appendChild(wktSectionLabel);
 
       // Text Area for WKT input
-      let wktContainer = document.createElement("div");
+      let wktContainer = document.createElement('div');
       wktContainer.style.cssText = `display: flex; flex-direction: column; gap: 5px;`;
 
       // Input for WKT Name
-      let input_WKT_name = document.createElement("input");
-      input_WKT_name.type = "text";
-      input_WKT_name.id = "input_WKT_name";
-      input_WKT_name.name = "input_WKT_name";
-      input_WKT_name.placeholder = "Name of WKT";
+      let input_WKT_name = document.createElement('input');
+      input_WKT_name.type = 'text';
+      input_WKT_name.id = 'input_WKT_name';
+      input_WKT_name.name = 'input_WKT_name';
+      input_WKT_name.placeholder = 'Name of WKT';
       input_WKT_name.style.cssText = `padding: 8px; font-size: 1rem; border: 2px solid; border-radius: 5px; width: 100%; box-sizing: border-box;`;
       wktContainer.appendChild(input_WKT_name);
 
       // Text Area for WKT input
-      let input_WKT = document.createElement("textarea");
-      input_WKT.id = "input_WKT";
-      input_WKT.name = "input_WKT";
-      input_WKT.placeholder = "POINT(X Y)  LINESTRING (X Y, X Y,...)  POLYGON(X Y, X Y, X Y,...) etc....";
+      let input_WKT = document.createElement('textarea');
+      input_WKT.id = 'input_WKT';
+      input_WKT.name = 'input_WKT';
+      input_WKT.placeholder = 'POINT(X Y)  LINESTRING (X Y, X Y,...)  POLYGON(X Y, X Y, X Y,...) etc....';
       input_WKT.style.cssText = `width: 100%; height: 10rem; min-height: 5rem; max-height: 40rem; padding: 8px; font-size: 1rem; border: 2px solid; border-radius: 5px; box-sizing: border-box; resize: vertical;`;
       // Restrict resizing to vertical
       wktContainer.appendChild(input_WKT);
 
       // Container for the buttons
-      let buttonContainer = document.createElement("div");
+      let buttonContainer = document.createElement('div');
       buttonContainer.style.cssText = `display: flex; gap: 45px;`;
 
-      let submit_WKT_btn = createButton("Import WKT", "#8BC34A", "#689F38", "#FFFFFF", "input");
-      submit_WKT_btn.id = "submit_WKT_btn";
-      submit_WKT_btn.title = "Import WKT Geometry to WME Layer";
-      submit_WKT_btn.addEventListener("click", draw_WKT);
+      let submit_WKT_btn = createButton('Import WKT', '#8BC34A', '#689F38', '#FFFFFF', 'input');
+      submit_WKT_btn.id = 'submit_WKT_btn';
+      submit_WKT_btn.title = 'Import WKT Geometry to WME Layer';
+      submit_WKT_btn.addEventListener('click', draw_WKT);
       buttonContainer.appendChild(submit_WKT_btn);
 
-      let clear_WKT_btn = createButton("Clear WKT", "#E57373", "#D32F2F", "#FFFFFF", "input");
-      clear_WKT_btn.id = "clear_WKT_btn";
-      clear_WKT_btn.title = "Clear WKT Geometry Input and Name";
-      clear_WKT_btn.addEventListener("click", clear_WKT_input);
+      let clear_WKT_btn = createButton('Clear WKT', '#E57373', '#D32F2F', '#FFFFFF', 'input');
+      clear_WKT_btn.id = 'clear_WKT_btn';
+      clear_WKT_btn.title = 'Clear WKT Geometry Input and Name';
+      clear_WKT_btn.addEventListener('click', clear_WKT_input);
       buttonContainer.appendChild(clear_WKT_btn);
 
       wktContainer.appendChild(buttonContainer);
       geoform.appendChild(wktContainer); // Append the container to the form
 
       // Add Toggle Button for Debug
-      let debugToggleContainer = document.createElement("div");
+      let debugToggleContainer = document.createElement('div');
       debugToggleContainer.style.cssText = `display: flex; align-items: center; margin-top: 15px;`;
 
-      let debugToggleLabel = document.createElement("label");
+      let debugToggleLabel = document.createElement('label');
       debugToggleLabel.style.cssText = `margin-left: 10px;`;
 
       const updateLabel = () => {
-        debugToggleLabel.innerText = `Debug mode ${debug ? "ON" : "OFF"}`;
+        debugToggleLabel.innerText = `Debug mode ${debug ? 'ON' : 'OFF'}`;
       };
 
-      let debugSwitchWrapper = document.createElement("label");
+      let debugSwitchWrapper = document.createElement('label');
       debugSwitchWrapper.style.cssText = `position: relative; display: inline-block; width: 40px; height: 20px; border: 1px solid #ccc; border-radius: 20px;`;
 
-      let debugToggleSwitch = document.createElement("input");
-      debugToggleSwitch.type = "checkbox";
+      let debugToggleSwitch = document.createElement('input');
+      debugToggleSwitch.type = 'checkbox';
       debugToggleSwitch.style.cssText = `opacity: 0; width: 0; height: 0;`;
 
-      let switchSlider = document.createElement("span");
+      let switchSlider = document.createElement('span');
       switchSlider.style.cssText = `position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px;`;
 
-      let innerSpan = document.createElement("span");
+      let innerSpan = document.createElement('span');
       innerSpan.style.cssText = `position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;`;
 
       switchSlider.appendChild(innerSpan);
 
       const updateSwitchState = () => {
-        switchSlider.style.backgroundColor = debug ? "#8BC34A" : "#ccc";
-        innerSpan.style.transform = debug ? "translateX(20px)" : "translateX(0)";
+        switchSlider.style.backgroundColor = debug ? '#8BC34A' : '#ccc';
+        innerSpan.style.transform = debug ? 'translateX(20px)' : 'translateX(0)';
       };
 
       debugToggleSwitch.checked = debug;
       updateLabel();
       updateSwitchState();
 
-      debugToggleSwitch.addEventListener("change", () => {
+      debugToggleSwitch.addEventListener('change', () => {
         debug = debugToggleSwitch.checked;
         updateLabel();
         updateSwitchState();
-        console.log(`${scriptName}: Debug mode is now ${debug ? "enabled" : "disabled"}`);
+        console.log(`${scriptName}: Debug mode is now ${debug ? 'enabled' : 'disabled'}`);
       });
 
       debugSwitchWrapper.appendChild(debugToggleSwitch);
@@ -878,9 +832,9 @@ var geometries = function () {
     setupProjectionsAndTransforms();
 
     wmeSDK.Events.on({
-      eventName: "wme-map-move-end",
+      eventName: 'wme-map-move-end',
       eventHandler: () => {
-        const whatsInView = document.getElementById("WMEGeowhatsInViewMessage");
+        const whatsInView = document.getElementById('WMEGeowhatsInViewMessage');
 
         if (whatsInView) {
           // Call the update function to refresh the contents of the existing popup
@@ -901,12 +855,12 @@ var geometries = function () {
 
   function initDatabase() {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open("GeometryLayersDB", 1);
+      const request = indexedDB.open('GeometryLayersDB', 1);
 
       request.onupgradeneeded = function (event) {
         const db = event.target.result;
-        if (!db.objectStoreNames.contains("layers")) {
-          db.createObjectStore("layers", { keyPath: "filename" });
+        if (!db.objectStoreNames.contains('layers')) {
+          db.createObjectStore('layers', { keyPath: 'filename' });
         }
       };
 
@@ -916,8 +870,8 @@ var geometries = function () {
       };
 
       request.onerror = function (event) {
-        console.error("Failed to open IndexedDB:", event.target.error);
-        reject(new Error("IndexedDB initialization failed"));
+        console.error('Failed to open IndexedDB:', event.target.error);
+        reject(new Error('IndexedDB initialization failed'));
       };
     });
   }
@@ -961,115 +915,115 @@ var geometries = function () {
     // Define projection mappings with additional properties needed to create OpenLayers projections (units: , maxExtent: yx:)
     //definition: should be in proj4js format
     const projDefs = {
-      "EPSG:4326": {
-        definition: "+title=WGS 84 (long/lat) +proj=longlat +ellps=WGS84 +datum=WGS84 +units=degrees",
+      'EPSG:4326': {
+        definition: '+title=WGS 84 (long/lat) +proj=longlat +ellps=WGS84 +datum=WGS84 +units=degrees',
       },
-      "EPSG:3857": {
-        definition: "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs",
+      'EPSG:3857': {
+        definition: '+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs',
       },
-      "EPSG:900913": {
-        definition: "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs",
+      'EPSG:900913': {
+        definition: '+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs',
       },
-      "EPSG:102100": {
-        definition: "+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs",
+      'EPSG:102100': {
+        definition: '+title=WGS 84 / Pseudo-Mercator +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs',
       },
-      "EPSG:4269": {
-        definition: "+title=NAD83 (long/lat) +proj=longlat +a=6378137.0 +b=6356752.31414036 +ellps=GRS80 +datum=NAD83 +units=degrees",
+      'EPSG:4269': {
+        definition: '+title=NAD83 (long/lat) +proj=longlat +a=6378137.0 +b=6356752.31414036 +ellps=GRS80 +datum=NAD83 +units=degrees',
       },
-      "EPSG:4267": {
-        definition: "+title=NAD27 +proj=longlat +ellps=clrk66 +datum=NAD27 +no_defs",
+      'EPSG:4267': {
+        definition: '+title=NAD27 +proj=longlat +ellps=clrk66 +datum=NAD27 +no_defs',
       },
-      "EPSG:3035": {
-        definition: "+title=ETRS89-extended / LAEA Europe +proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:3035': {
+        definition: '+title=ETRS89-extended / LAEA Europe +proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:4258": {
-        definition: "+title=ETRS89 (European Terrestrial Reference System 1989 +proj=longlat +ellps=GRS80 +no_defs +type=crs",
+      'EPSG:4258': {
+        definition: '+title=ETRS89 (European Terrestrial Reference System 1989 +proj=longlat +ellps=GRS80 +no_defs +type=crs',
       },
-      "EPSG:25832": {
-        definition: "+title=ETRS89 / UTM zone 32N +proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:25832': {
+        definition: '+title=ETRS89 / UTM zone 32N +proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:27700": {
-        definition: "+title=OSGB36 / British National Grid +proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.060 +units=m +no_defs",
+      'EPSG:27700': {
+        definition: '+title=OSGB36 / British National Grid +proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.060 +units=m +no_defs',
       },
-      "EPSG:4283": {
-        definition: "+title=GDA94 / Geocentric Datum of Australia 1994 +proj=longlat +ellps=GRS80 +no_defs +type=crs",
+      'EPSG:4283': {
+        definition: '+title=GDA94 / Geocentric Datum of Australia 1994 +proj=longlat +ellps=GRS80 +no_defs +type=crs',
       },
-      "EPSG:4214": {
-        definition: "+title=Beijing 1954 +proj=longlat +ellps=krass +towgs84=15.8,-154.4,-82.3,0,0,0,0 +no_defs +type=crs",
+      'EPSG:4214': {
+        definition: '+title=Beijing 1954 +proj=longlat +ellps=krass +towgs84=15.8,-154.4,-82.3,0,0,0,0 +no_defs +type=crs',
       },
-      "EPSG:3414": {
+      'EPSG:3414': {
         definition:
-          "+title=SVY21 / Singapore TM +proj=tmerc +lat_0=1.36666666666667 +lon_0=103.833333333333 +k=1 +x_0=28001.642 +y_0=38744.572 +ellps=WGS84 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+          '+title=SVY21 / Singapore TM +proj=tmerc +lat_0=1.36666666666667 +lon_0=103.833333333333 +k=1 +x_0=28001.642 +y_0=38744.572 +ellps=WGS84 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs',
       },
       // NAD 83 and by Zone
-      "EPSG:26901": {
-        definition: "+title=NAD83 / UTM zone 1N +proj=utm +zone=1 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26901': {
+        definition: '+title=NAD83 / UTM zone 1N +proj=utm +zone=1 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26902": {
-        definition: "+title=NAD83 / UTM zone 2N +proj=utm +zone=2 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26902': {
+        definition: '+title=NAD83 / UTM zone 2N +proj=utm +zone=2 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26903": {
-        definition: "+title=NAD83 / UTM zone 3N +proj=utm +zone=3 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26903': {
+        definition: '+title=NAD83 / UTM zone 3N +proj=utm +zone=3 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26904": {
-        definition: "+title=NAD83 / UTM zone 4N +proj=utm +zone=4 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26904': {
+        definition: '+title=NAD83 / UTM zone 4N +proj=utm +zone=4 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26905": {
-        definition: "+title=NAD83 / UTM zone 5N +proj=utm +zone=5 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26905': {
+        definition: '+title=NAD83 / UTM zone 5N +proj=utm +zone=5 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26906": {
-        definition: "+title=NAD83 / UTM zone 6N +proj=utm +zone=6 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26906': {
+        definition: '+title=NAD83 / UTM zone 6N +proj=utm +zone=6 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26907": {
-        definition: "+title=NAD83 / UTM zone 7N +proj=utm +zone=7 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26907': {
+        definition: '+title=NAD83 / UTM zone 7N +proj=utm +zone=7 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26908": {
-        definition: "+title=NAD83 / UTM zone 8N +proj=utm +zone=8 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26908': {
+        definition: '+title=NAD83 / UTM zone 8N +proj=utm +zone=8 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26909": {
-        definition: "+title=NAD83 / UTM zone 9N +proj=utm +zone=9 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26909': {
+        definition: '+title=NAD83 / UTM zone 9N +proj=utm +zone=9 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26910": {
-        definition: "+title=NAD83 / UTM zone 10N +proj=utm +zone=10 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26910': {
+        definition: '+title=NAD83 / UTM zone 10N +proj=utm +zone=10 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26911": {
-        definition: "+title=NAD83 / UTM zone 11N +proj=utm +zone=11 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26911': {
+        definition: '+title=NAD83 / UTM zone 11N +proj=utm +zone=11 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26912": {
-        definition: "+title=NAD83 / UTM zone 12N +proj=utm +zone=12 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26912': {
+        definition: '+title=NAD83 / UTM zone 12N +proj=utm +zone=12 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26913": {
-        definition: "+title=NAD83 / UTM zone 13N +proj=utm +zone=13 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26913': {
+        definition: '+title=NAD83 / UTM zone 13N +proj=utm +zone=13 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26914": {
-        definition: "+title=NAD83 / UTM zone 14N +proj=utm +zone=14 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26914': {
+        definition: '+title=NAD83 / UTM zone 14N +proj=utm +zone=14 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26915": {
-        definition: "+title=NAD83 / UTM zone 15N +proj=utm +zone=15 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26915': {
+        definition: '+title=NAD83 / UTM zone 15N +proj=utm +zone=15 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26916": {
-        definition: "+title=NAD83 / UTM zone 16N +proj=utm +zone=16 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26916': {
+        definition: '+title=NAD83 / UTM zone 16N +proj=utm +zone=16 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26917": {
-        definition: "+title=NAD83 / UTM zone 17N +proj=utm +zone=17 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26917': {
+        definition: '+title=NAD83 / UTM zone 17N +proj=utm +zone=17 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26918": {
-        definition: "+title=NAD83 / UTM zone 18N +proj=utm +zone=18 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26918': {
+        definition: '+title=NAD83 / UTM zone 18N +proj=utm +zone=18 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26919": {
-        definition: "+title=NAD83 / UTM zone 19N +proj=utm +zone=19 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26919': {
+        definition: '+title=NAD83 / UTM zone 19N +proj=utm +zone=19 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26920": {
-        definition: "+title=NAD83 / UTM zone 20N +proj=utm +zone=20 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26920': {
+        definition: '+title=NAD83 / UTM zone 20N +proj=utm +zone=20 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26921": {
-        definition: "+title=NAD83 / UTM zone 21N +proj=utm +zone=21 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26921': {
+        definition: '+title=NAD83 / UTM zone 21N +proj=utm +zone=21 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26922": {
-        definition: "+title=NAD83 / UTM zone 22N +proj=utm +zone=22 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26922': {
+        definition: '+title=NAD83 / UTM zone 22N +proj=utm +zone=22 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
-      "EPSG:26923": {
-        definition: "+title=NAD83 / UTM zone 23N +proj=utm +zone=23 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs",
+      'EPSG:26923': {
+        definition: '+title=NAD83 / UTM zone 23N +proj=utm +zone=23 +ellps=GRS80 +towgs84=-2,0,4,0,0,0,0 +units=m +no_defs +type=crs',
       },
     };
 
@@ -1096,68 +1050,153 @@ var geometries = function () {
 
     projectionMap = {
       // WGS84 common aliases, same as EPSG:4326
-      CRS84: "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS84": "EPSG:4326",
-      WGS84: "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:WGS84": "EPSG:4326",
-      "WGS 84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:WGS_84": "EPSG:4326",
-      "CRS WGS84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS_WGS84": "EPSG:4326",
-      "CRS:WGS84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS:WGS84": "EPSG:4326",
-      "CRS::WGS84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS::WGS84": "EPSG:4326",
-      "CRS:84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS:84": "EPSG:4326",
-      "CRS::84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS::84": "EPSG:4326",
-      "CRS 84": "EPSG:4326",
-      "urn:ogc:def:crs:OGC:1.3:CRS_84": "EPSG:4326",
+      CRS84: 'EPSG:4326',
+      'urn:ogc:def:crs:OGC:1.3:CRS84': 'EPSG:4326',
+      WGS84: 'EPSG:4326',
+      'urn:ogc:def:crs:OGC:1.3:WGS84': 'EPSG:4326',
+      'WGS 84': 'EPSG:4326',
+      'urn:ogc:def:crs:OGC:1.3:WGS_84': 'EPSG:4326',
+      'CRS WGS84': 'EPSG:4326',
+      'urn:ogc:def:crs:OGC:1.3:CRS_WGS84': 'EPSG:4326',
+      'CRS:WGS84': 'EPSG:4326',
+      'urn:ogc:def:crs:OGC:1.3:CRS:WGS84': 'EPSG:4326',
+      'CRS::WGS84': 'EPSG:4326',
+      'urn:ogc:def:crs:OGC:1.3:CRS::WGS84': 'EPSG:4326',
+      'CRS:84': 'EPSG:4326',
+      'urn:ogc:def:crs:OGC:1.3:CRS:84': 'EPSG:4326',
+      'CRS::84': 'EPSG:4326',
+      'urn:ogc:def:crs:OGC:1.3:CRS::84': 'EPSG:4326',
+      'CRS 84': 'EPSG:4326',
+      'urn:ogc:def:crs:OGC:1.3:CRS_84': 'EPSG:4326',
       // NAD83 common aliases, same as EPSG:4269
-      "NAD 83": "EPSG:4269",
-      "urn:ogc:def:crs:OGC:1.3:NAD_83": "EPSG:4269",
-      NAD83: "EPSG:4269",
-      "urn:ogc:def:crs:OGC:1.3:NAD83": "EPSG:4269",
+      'NAD 83': 'EPSG:4269',
+      'urn:ogc:def:crs:OGC:1.3:NAD_83': 'EPSG:4269',
+      NAD83: 'EPSG:4269',
+      'urn:ogc:def:crs:OGC:1.3:NAD83': 'EPSG:4269',
       // ETRS89 / LAEA Europe common aliases, same as EPSG:3035
-      "ETRS 89": "EPSG:3035",
-      "urn:ogc:def:crs:OGC:1.3:ETRS_89": "EPSG:3035",
-      ETRS89: "EPSG:3035",
-      "urn:ogc:def:crs:OGC:1.3:ETRS89": "EPSG:3035",
+      'ETRS 89': 'EPSG:3035',
+      'urn:ogc:def:crs:OGC:1.3:ETRS_89': 'EPSG:3035',
+      ETRS89: 'EPSG:3035',
+      'urn:ogc:def:crs:OGC:1.3:ETRS89': 'EPSG:3035',
       // NAD27 common aliases, same as EPSG:4267
-      "NAD 27": "EPSG:4267",
-      "urn:ogc:def:crs:OGC:1.3:NAD_27": "EPSG:4267",
-      NAD27: "EPSG:4267",
-      "urn:ogc:def:crs:OGC:1.3:NAD27": "EPSG:4267",
+      'NAD 27': 'EPSG:4267',
+      'urn:ogc:def:crs:OGC:1.3:NAD_27': 'EPSG:4267',
+      NAD27: 'EPSG:4267',
+      'urn:ogc:def:crs:OGC:1.3:NAD27': 'EPSG:4267',
     };
 
     const identifierTemplates = [
-      "EPSG:{{code}}",
-      "urn:ogc:def:crs:EPSG:{{code}}",
-      "urn:ogc:def:crs:OGC:1.3:EPSG:{{code}}",
-      "EPSG::{{code}}",
-      "urn:ogc:def:crs:EPSG::{{code}}",
-      "urn:ogc:def:crs:OGC:1.3:EPSG::{{code}}",
-      "CRS:{{code}}",
-      "urn:ogc:def:crs:OGC:1.3:CRS:{{code}}",
-      "CRS::{{code}}",
-      "urn:ogc:def:crs:OGC:1.3:CRS::{{code}}",
-      "CRS {{code}}",
-      "urn:ogc:def:crs:OGC:1.3:CRS_{{code}}",
-      "CRS{{code}}",
-      "urn:ogc:def:crs:OGC:1.3:CRS{{code}}",
+      'EPSG:{{code}}',
+      'urn:ogc:def:crs:EPSG:{{code}}',
+      'urn:ogc:def:crs:OGC:1.3:EPSG:{{code}}',
+      'EPSG::{{code}}',
+      'urn:ogc:def:crs:EPSG::{{code}}',
+      'urn:ogc:def:crs:OGC:1.3:EPSG::{{code}}',
+      'CRS:{{code}}',
+      'urn:ogc:def:crs:OGC:1.3:CRS:{{code}}',
+      'CRS::{{code}}',
+      'urn:ogc:def:crs:OGC:1.3:CRS::{{code}}',
+      'CRS {{code}}',
+      'urn:ogc:def:crs:OGC:1.3:CRS_{{code}}',
+      'CRS{{code}}',
+      'urn:ogc:def:crs:OGC:1.3:CRS{{code}}',
     ];
 
     // Extract EPSG codes from the projDefs object
-    const epsgCodes = Object.keys(projDefs).map((key) => key.split(":")[1]);
+    const epsgCodes = Object.keys(projDefs).map((key) => key.split(':')[1]);
     epsgCodes.forEach((code) => {
       identifierTemplates.forEach((template) => {
-        const identifier = template.replace("{{code}}", code);
+        const identifier = template.replace('{{code}}', code);
         projectionMap[identifier] = `EPSG:${code}`;
       });
     });
 
     if (debug) console.log(`${scriptName}: projectionMap:`, projectionMap);
+  }
+
+  /****************************************************************************************
+   * fetchProjString
+   *
+   * Retrieves the projection definition string for a specified CRS identifier from `epsg.io`.
+   * This function attempts to identify the EPSG code from various formats using a pattern
+   * matching approach and then makes an HTTP request to fetch the corresponding projection
+   * string. The result is stored in the `proj4` definitions for future CRS transformations.
+   * Handles both retrieval and error scenarios, reporting back through a callback.
+   *
+   * Parameters:
+   * @param {string} identifier - The CRS identifier that may be in various formats.
+   * @param {function} callback - A function invoked with either an error or a success message
+   * containing the fetched projection definition.
+   *
+   * Workflow:
+   * - Utilizes regex patterns to extract the numeric EPSG code from varying CRS identifier formats.
+   * - Constructs the standard EPSG code string and maps it in the global projectionMap for quick reference.
+   * - Forms a request URL targeting the EPSG service `epsg.io`, which provides projection data.
+   * - Executes `GM_xmlhttpRequest` to asynchronously fetch the definition string.
+   * - On successful retrieval, updates `proj4.defs` with the definition; otherwise, calls back with an error.
+   * - Provides informative feedback through the callback, capturing success details or error context.
+   ****************************************************************************************/
+  function fetchProjString(identifier, callback) {
+    // Function to extract the EPSG code from various identifier formats
+    function extractEPSGCode(identifier) {
+      const identifierPatterns = [
+        /^EPSG:(\d+)$/,
+        /^urn:ogc:def:crs:EPSG:(\d+)$/,
+        /^urn:ogc:def:crs:OGC:1\.3:EPSG:(\d+)$/,
+        /^EPSG:(\d+)$/,
+        /^urn:ogc:def:crs:EPSG:(\d+)$/,
+        /^urn:ogc:def:crs:OGC:1\.3:EPSG:(\d+)$/,
+        /^CRS:(\d+)$/,
+        /^urn:ogc:def:crs:OGC:1\.3:CRS:(\d+)$/,
+        /^CRS:(\d+)$/,
+        /^urn:ogc:def:crs:OGC:1\.3:CRS:(\d+)$/,
+        /^CRS (\d+)$/,
+        /^urn:ogc:def:crs:OGC:1\.3:CRS_(\d+)$/,
+        /^CRS(\d+)$/,
+        /^urn:ogc:def:crs:OGC:1\.3:CRS(\d+)$/,
+      ];
+
+      for (const pattern of identifierPatterns) {
+        const match = identifier.match(pattern);
+        if (match) {
+          return match[1]; // Return the captured EPSG code
+        }
+      }
+
+      throw new Error('Invalid EPSG code format');
+    }
+
+    try {
+      // Extract the plain EPSG code using the helper function
+      const epsgCode = extractEPSGCode(identifier);
+      const epsg = `EPSG:${epsgCode}`; // Construct EPSG format for usage
+      // Add to projectionMap
+      projectionMap[identifier] = epsg;
+
+      const url = `https://epsg.io/${epsgCode}.proj4`;
+
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: url,
+        onload: function (response) {
+          if (response.status >= 200 && response.status < 300) {
+            // Update proj4.defs with the fetched definition
+            proj4.defs(epsg, response.responseText);
+            // Create the informational message
+            const message = `${epsg} was added with definition: ${response.responseText}`;
+            callback(null, message);
+          } else {
+            callback(new Error(`Failed to get ESPG Projection data from espg.io for ${identifier}: status code:${response.status}`), null);
+          }
+        },
+        onerror: function (error) {
+          callback(new Error(`Network Error: ${error}`), null);
+        },
+      });
+    } catch (error) {
+      // If the EPSG code extraction fails, pass the error to the callback
+      callback(error, null);
+    }
   }
 
   /****************************************************************************
@@ -1186,24 +1225,24 @@ var geometries = function () {
    *****************************************************************************/
   function draw_WKT() {
     // Retrieve style and layer options
-    let color = document.getElementById("color").value;
-    let fillOpacity = document.getElementById("fill_opacity").value;
-    let fontsize = document.getElementById("font_size").value;
-    let lineopacity = document.getElementById("line_stroke_opacity").value;
-    let linesize = document.getElementById("line_size").value;
+    let color = document.getElementById('color').value;
+    let fillOpacity = document.getElementById('fill_opacity').value;
+    let fontsize = document.getElementById('font_size').value;
+    let lineopacity = document.getElementById('line_stroke_opacity').value;
+    let linesize = document.getElementById('line_size').value;
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
-    let layerName = document.getElementById("input_WKT_name").value.trim();
+    let layerName = document.getElementById('input_WKT_name').value.trim();
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
     // Check for empty layer name
     if (!layerName) {
       if (debug) console.error(`${scriptName}: WKT Input layer name cannot be empty.`);
-      WazeWrap.Alerts.error(scriptName, "WKT Input layer name cannot be empty.");
+      WazeWrap.Alerts.error(scriptName, 'WKT Input layer name cannot be empty.');
       return;
     }
 
     // Attempt to check if the layer already exists using SDK
-    const layerID = layerName.replace(/[^a-z0-9_-]/gi, "_");
+    const layerID = layerName.replace(/[^a-z0-9_-]/gi, '_');
 
     try {
       // Try setting the visibility of the layer to check existence
@@ -1217,7 +1256,7 @@ var geometries = function () {
       WazeWrap.Alerts.error(scriptName, `Current layer name "${layerName} " already used!`);
       return;
     } catch (error) {
-      if (error.name === "InvalidStateError") {
+      if (error.name === 'InvalidStateError') {
         // Layer does not exist: it's safe to proceed further
         if (debug) console.log(`${scriptName}: Layer name ${layerName} does not exist, proceeding to parse file.`);
       } else {
@@ -1228,10 +1267,10 @@ var geometries = function () {
     }
 
     // Retrieve and validate WKT input
-    let wktInput = document.getElementById("input_WKT").value.trim();
+    let wktInput = document.getElementById('input_WKT').value.trim();
     if (!wktInput) {
       if (debug) console.error(`${scriptName}: WKT input is empty.`);
-      WazeWrap.Alerts.error(scriptName, "WKT input is empty.");
+      WazeWrap.Alerts.error(scriptName, 'WKT input is empty.');
       return;
     }
 
@@ -1242,7 +1281,7 @@ var geometries = function () {
       const geojson = geoWKTer.toGeoJSON(wktString); // Convert to GeoJSON
 
       // Prepare the layer object and invoke parseFile, which handles layer creation
-      const obj = new layerStoreObj(geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "${Name}", "WKT");
+      const obj = new layerStoreObj(geojson, color, 'GEOJSON', layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '${Name}', 'WKT');
       parseFile(obj);
     } catch (error) {
       console.error(`${scriptName}: Error processing WKT input`, error);
@@ -1252,8 +1291,8 @@ var geometries = function () {
 
   // Clears the current contents of the textarea.
   function clear_WKT_input() {
-    document.getElementById("input_WKT").value = "";
-    document.getElementById("input_WKT_name").value = "";
+    document.getElementById('input_WKT').value = '';
+    document.getElementById('input_WKT_name').value = '';
   }
 
   /****************************************************************************
@@ -1281,11 +1320,11 @@ var geometries = function () {
   function drawBoundary(item) {
     if (debug) console.log(`drawBoundary called with item: ${item}`);
     // Retrieve styling options
-    let color = document.getElementById("color").value;
-    let fillOpacity = document.getElementById("fill_opacity").value;
-    let fontsize = document.getElementById("font_size").value;
-    let lineopacity = document.getElementById("line_stroke_opacity").value;
-    let linesize = document.getElementById("line_size").value;
+    let color = document.getElementById('color').value;
+    let fillOpacity = document.getElementById('fill_opacity').value;
+    let fontsize = document.getElementById('font_size').value;
+    let lineopacity = document.getElementById('line_stroke_opacity').value;
+    let linesize = document.getElementById('line_size').value;
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
@@ -1301,12 +1340,12 @@ var geometries = function () {
         const Feature = geojson.features[0];
         let layerName;
 
-        if (item === "zipcode") {
+        if (item === 'zipcode') {
           layerName = `ZIP CODE: ${Feature.properties.BASENAME}`;
         } else {
           layerName = Feature.properties.NAME;
         }
-        const layerID = layerName.replace(/[^a-z0-9_-]/gi, "_");
+        const layerID = layerName.replace(/[^a-z0-9_-]/gi, '_');
 
         try {
           // Attempt to set the visibility of the layer using the SDK to check if it exists
@@ -1320,7 +1359,7 @@ var geometries = function () {
           WazeWrap.Alerts.error(scriptName, `Current ${item} "${layerName}" Boundary already Loaded!`);
           return;
         } catch (error) {
-          if (error.name === "InvalidStateError") {
+          if (error.name === 'InvalidStateError') {
             // Layer does not exist: it's safe to proceed further
             if (debug) console.log(`${scriptName}: Layer "${layerName}" does not exist, proceeding to parse file.`);
           } else {
@@ -1331,7 +1370,7 @@ var geometries = function () {
         }
 
         // Create the layer object and invoke parseFile since the layer does not exist
-        const obj = new layerStoreObj(geojson, color, "GEOJSON", layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, `${layerName}`, "GEOJSON");
+        const obj = new layerStoreObj(geojson, color, 'GEOJSON', layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, `${layerName}`, 'GEOJSON');
         parseFile(obj);
       })
       .catch((error) => {
@@ -1360,22 +1399,22 @@ var geometries = function () {
    * - Operates within a larger system context, relying on global variables such as `formats` for file format validation.
    *************************************************************************/
   function addGeometryLayer() {
-    const fileList = document.getElementById("GeometryFile");
+    const fileList = document.getElementById('GeometryFile');
     const file = fileList.files[0];
-    fileList.value = "";
+    fileList.value = '';
 
     const fileName = file.name;
-    const lastDotIndex = fileName.lastIndexOf(".");
+    const lastDotIndex = fileName.lastIndexOf('.');
 
-    const fileext = lastDotIndex !== -1 ? fileName.substring(lastDotIndex + 1).toUpperCase() : "";
+    const fileext = lastDotIndex !== -1 ? fileName.substring(lastDotIndex + 1).toUpperCase() : '';
     const filename = lastDotIndex !== -1 ? fileName.substring(0, lastDotIndex) : fileName;
 
     // Collect configuration options from UI
-    const color = document.getElementById("color").value;
-    const fillOpacity = document.getElementById("fill_opacity").value;
-    const fontsize = document.getElementById("font_size").value;
-    const lineopacity = document.getElementById("line_stroke_opacity").value;
-    const linesize = document.getElementById("line_size").value;
+    const color = document.getElementById('color').value;
+    const fillOpacity = document.getElementById('fill_opacity').value;
+    const fontsize = document.getElementById('font_size').value;
+    const lineopacity = document.getElementById('line_stroke_opacity').value;
+    const linesize = document.getElementById('line_size').value;
     const linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     const labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
 
@@ -1387,7 +1426,7 @@ var geometries = function () {
           let fileObj;
 
           switch (fileext) {
-            case "ZIP":
+            case 'ZIP':
               if (debug) console.log(`${scriptName}: .ZIP shapefile file found, converting to GEOJSON...`);
               if (debug) console.time(`${scriptName}: .ZIP shapefile conversion in`);
 
@@ -1401,16 +1440,16 @@ var geometries = function () {
                   const SHPgeoJSON = geoSHPer.toGeoJSON();
                   if (debug) console.timeEnd(`${scriptName}: .ZIP shapefile conversion in`);
 
-                  const fileObj = new layerStoreObj(SHPgeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "SHP");
+                  const fileObj = new layerStoreObj(SHPgeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', 'SHP');
                   parseFile(fileObj);
                 } catch (error) {
                   toggleParsingMessage(false);
-                  handleError("ZIP shapefile")(error);
+                  handleError('ZIP shapefile')(error);
                 }
               })();
               break;
 
-            case "WKT":
+            case 'WKT':
               try {
                 // WKT files are assumed to be in projection WGS84  = EPSG:4326
                 if (debug) console.log(`${scriptName}: .WKT file found, converting to GEOJSON...`);
@@ -1422,15 +1461,15 @@ var geometries = function () {
                 const WKTgeoJSON = geoWKTer.toGeoJSON(wktDoc);
 
                 if (debug) console.timeEnd(`${scriptName}: .WKT conversion in`);
-                fileObj = new layerStoreObj(WKTgeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                fileObj = new layerStoreObj(WKTgeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
-                handleError("WKT conversion")(error);
+                handleError('WKT conversion')(error);
               }
               break;
 
-            case "GPX":
+            case 'GPX':
               //The GPX format is inherently based on the WGS 84 coordinate system (EPSG:4326)
               try {
                 if (debug) console.log(`${scriptName}: .GPX file found, converting to GEOJSON...`);
@@ -1442,15 +1481,15 @@ var geometries = function () {
                 const GPXtoGeoJSON = geoGPXer.toGeoJSON(gpxDoc);
 
                 if (debug) console.timeEnd(`${scriptName}: .GPX conversion in`);
-                fileObj = new layerStoreObj(GPXtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                fileObj = new layerStoreObj(GPXtoGeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
-                handleError("KML conversion")(error);
+                handleError('GPX conversion')(error);
               }
               break;
 
-            case "KML":
+            case 'KML':
               //Represent geographic data and are natively based on the WGS 84 coordinate system (EPSG:4326)
               try {
                 if (debug) console.log(`${scriptName}: .KML file found, converting to GEOJSON...`);
@@ -1462,15 +1501,15 @@ var geometries = function () {
                 const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
 
                 if (debug) console.timeEnd(`${scriptName}: .KML conversion in`);
-                fileObj = new layerStoreObj(KMLtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                fileObj = new layerStoreObj(KMLtoGeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
-                handleError("KML conversion")(error);
+                handleError('KML conversion')(error);
               }
               break;
 
-            case "KMZ":
+            case 'KMZ':
               //Represent geographic data and are natively based on the WGS 84 coordinate system (EPSG:4326)
               if (debug) console.log(`${scriptName}: .KMZ file found, extracting .KML files...`);
               if (debug) console.time(`${scriptName}: .KMZ conversion in`);
@@ -1494,17 +1533,17 @@ var geometries = function () {
                     const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
 
                     if (debug) console.timeEnd(`${scriptName}: .KMZ conversion in`);
-                    fileObj = new layerStoreObj(KMLtoGeoJSON, color, "GEOJSON", uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", "KMZ");
+                    fileObj = new layerStoreObj(KMLtoGeoJSON, color, 'GEOJSON', uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', 'KMZ');
                     parseFile(fileObj);
                   });
                 } catch (error) {
                   toggleParsingMessage(false);
-                  handleError("KMZ read operation")(error);
+                  handleError('KMZ read operation')(error);
                 }
               })();
               break;
 
-            case "GML":
+            case 'GML':
               try {
                 if (debug) console.log(`${scriptName}: .GML file found, converting to GEOJSON...`);
                 if (debug) console.time(`${scriptName}: .GML conversion in`);
@@ -1516,40 +1555,40 @@ var geometries = function () {
 
                 if (debug) console.timeEnd(`${scriptName}: .GML conversion in`);
 
-                fileObj = new layerStoreObj(GMLtoGeoJSON, color, "GEOJSON", filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                fileObj = new layerStoreObj(GMLtoGeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
-                handleError("GML conversion")(error);
+                handleError('GML conversion')(error);
               }
               break;
 
-            case "GEOJSON":
+            case 'GEOJSON':
               try {
                 if (debug) console.log(`${scriptName}: .GEOJSON file found...`);
                 toggleParsingMessage(true); // turned off in parseFile()
                 const geojsonData = JSON.parse(e.target.result); // Parse the .GEOJSON file content as a JSON object
-                fileObj = new layerStoreObj(geojsonData, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, "", fileext);
+                fileObj = new layerStoreObj(geojsonData, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
-                handleError("GEOJSON parsing")(error);
+                handleError('GEOJSON parsing')(error);
               }
               break;
 
             default:
               toggleParsingMessage(false);
-              handleError("unsupported file type")(new Error("Unsupported file type"));
+              handleError('unsupported file type')(new Error('Unsupported file type'));
               break;
           }
         } catch (error) {
           toggleParsingMessage(false);
-          handleError("file")(error);
+          handleError('file')(error);
         }
       });
     };
 
-    if (fileext === "ZIP" || fileext === "KMZ") {
+    if (fileext === 'ZIP' || fileext === 'KMZ') {
       reader.readAsArrayBuffer(file);
     } else {
       reader.readAsText(file);
@@ -1586,7 +1625,7 @@ var geometries = function () {
   function transformGeoJSON(geoJSON, sourceCRS, targetCRS) {
     if (debug) console.log(`${scriptName}: transformGeoJSON() called with SourceCRS = ${sourceCRS} and TargetCRS = ${targetCRS}`);
 
-    const isValidCRS = (crs) => typeof crs === "string" && /^EPSG:\d{4,5}$/.test(crs);
+    const isValidCRS = (crs) => typeof crs === 'string' && /^EPSG:\d{4,5}$/.test(crs);
 
     if (!isValidCRS(sourceCRS) || !isValidCRS(targetCRS)) {
       console.error(`${scriptName}: Invalid CRS format detected: sourceCRS: ${sourceCRS}, targetCRS: ${targetCRS}`);
@@ -1604,15 +1643,15 @@ var geometries = function () {
     }
 
     const geoJSONTypeMap = {
-      FEATURECOLLECTION: "FeatureCollection",
-      FEATURE: "Feature",
-      GEOMETRYCOLLECTION: "GeometryCollection",
-      POINT: "Point",
-      LINESTRING: "LineString",
-      POLYGON: "Polygon",
-      MULTIPOINT: "MultiPoint",
-      MULTILINESTRING: "MultiLineString",
-      MULTIPOLYGON: "MultiPolygon",
+      FEATURECOLLECTION: 'FeatureCollection',
+      FEATURE: 'Feature',
+      GEOMETRYCOLLECTION: 'GeometryCollection',
+      POINT: 'Point',
+      LINESTRING: 'LineString',
+      POLYGON: 'Polygon',
+      MULTIPOINT: 'MultiPoint',
+      MULTILINESTRING: 'MultiLineString',
+      MULTIPOLYGON: 'MultiPolygon',
     };
 
     const updateGeoJSONType = (type) => geoJSONTypeMap[type.toUpperCase()] || type;
@@ -1620,16 +1659,18 @@ var geometries = function () {
     // Normalize the feacher "type" at the root level to valid geoJSON
     geoJSON.type = updateGeoJSONType(geoJSON.type);
 
-    if (geoJSON.type === "FeatureCollection") {
+    if (geoJSON.type === 'FeatureCollection') {
       geoJSON.features = flattenGeoJSON(geoJSON.features, sourceCRS, targetCRS);
-    } else if (geoJSON.type === "Feature") {
-      geoJSON.geometry = flattenGeometry(geoJSON.geometry, sourceCRS, targetCRS);
-    } else if (geoJSON.type === "GeometryCollection") {
-      geoJSON.geometries = geoJSON.geometries.map((geometry) => flattenGeometry(geometry, sourceCRS, targetCRS));
+    } else if (geoJSON.type === 'Feature') {
+      // Convert the geometry into features and directly use as features
+      geoJSON.features = flattenGeometry(geoJSON.geometry, sourceCRS, targetCRS);
+    } else if (geoJSON.type === 'GeometryCollection') {
+      // Convert each geometry into features and directly use as features
+      geoJSON.features = geoJSON.geometries.flatMap((geometry) => flattenGeometry(geometry, sourceCRS, targetCRS));
     }
 
     geoJSON.crs = {
-      type: "name",
+      type: 'name',
       properties: {
         name: targetCRS,
       },
@@ -1654,16 +1695,15 @@ var geometries = function () {
    ****************************************************************************************/
   function flattenGeoJSON(features, sourceCRS, targetCRS) {
     return features.flatMap((feature) => {
-      //featureIndex - JS55CT
       const flattenedGeometries = [];
       geomEach(feature.geometry, (geometry) => {
         const type = geometry === null ? null : geometry.type;
         switch (type) {
-          case "Point":
-          case "LineString":
-          case "Polygon":
+          case 'Point':
+          case 'LineString':
+          case 'Polygon':
             flattenedGeometries.push({
-              type: "Feature",
+              type: 'Feature',
               geometry: {
                 type: type,
                 coordinates: convertCoordinates(sourceCRS, targetCRS, geometry.coordinates),
@@ -1671,13 +1711,13 @@ var geometries = function () {
               properties: feature.properties,
             });
             break;
-          case "MultiPoint":
-          case "MultiLineString":
-          case "MultiPolygon":
-            const geomType = type.split("Multi")[1];
+          case 'MultiPoint':
+          case 'MultiLineString':
+          case 'MultiPolygon':
+            const geomType = type.split('Multi')[1];
             geometry.coordinates.forEach((coordinate) => {
               flattenedGeometries.push({
-                type: "Feature",
+                type: 'Feature',
                 geometry: {
                   type: geomType,
                   coordinates: convertCoordinates(sourceCRS, targetCRS, coordinate),
@@ -1686,10 +1726,10 @@ var geometries = function () {
               });
             });
             break;
-          case "GeometryCollection":
+          case 'GeometryCollection':
             geometry.geometries.forEach((geom) => {
               flattenedGeometries.push({
-                type: "Feature",
+                type: 'Feature',
                 geometry: {
                   type: geom.type,
                   coordinates: convertCoordinates(sourceCRS, targetCRS, geom.coordinates),
@@ -1706,6 +1746,61 @@ var geometries = function () {
     });
   }
 
+  /**
+   * Flattens and transforms a GeoJSON geometry into a collection of GeoJSON features,
+   * converting coordinates from a source CRS to a target CRS.
+   *
+   * @param {Object} geometry - The GeoJSON geometry object to be flattened.
+   * @param {string} sourceCRS - The EPSG code of the source Coordinate Reference System.
+   * @param {string} targetCRS - The EPSG code of the target Coordinate Reference System.
+   * @returns {Array<Object>} - An array of GeoJSON features derived from the input geometry.
+   *
+   * The function handles various geometry types:
+   * - Converts 'Point', 'LineString', and 'Polygon' directly into features.
+   * - Splits 'MultiPoint', 'MultiLineString', and 'MultiPolygon' into individual features.
+   * - Each feature includes the transformed coordinates and an empty properties object.
+   *
+   * Throws an error if the geometry type is unknown.
+   */
+  function flattenGeometry(geometry, sourceCRS, targetCRS) {
+    const flattenedFeatures = [];
+    geomEach(geometry, (geom) => {
+      const type = geom === null ? null : geom.type;
+      switch (type) {
+        case 'Point':
+        case 'LineString':
+        case 'Polygon':
+          flattenedFeatures.push({
+            type: 'Feature',
+            geometry: {
+              type: type,
+              coordinates: convertCoordinates(sourceCRS, targetCRS, geom.coordinates),
+            },
+            properties: {}, // Add any additional properties if needed
+          });
+          break;
+        case 'MultiPoint':
+        case 'MultiLineString':
+        case 'MultiPolygon':
+          const geomType = type.split('Multi')[1];
+          geom.coordinates.forEach((coordinate) => {
+            flattenedFeatures.push({
+              type: 'Feature',
+              geometry: {
+                type: geomType,
+                coordinates: convertCoordinates(sourceCRS, targetCRS, coordinate),
+              },
+              properties: {}, // Add any additional properties if needed
+            });
+          });
+          break;
+        default:
+          throw new Error(`Unknown Geometry Type: ${type}`);
+      }
+    });
+    return flattenedFeatures;
+  }
+
   /****************************************************************************************
    * geomEach
    *
@@ -1718,22 +1813,22 @@ var geometries = function () {
   function geomEach(geometry, callback) {
     const type = geometry === null ? null : geometry.type;
     switch (type) {
-      case "Point":
-      case "LineString":
-      case "Polygon":
+      case 'Point':
+      case 'LineString':
+      case 'Polygon':
         callback(geometry);
         break;
-      case "MultiPoint":
-      case "MultiLineString":
-      case "MultiPolygon":
+      case 'MultiPoint':
+      case 'MultiLineString':
+      case 'MultiPolygon':
         geometry.coordinates.forEach((coordinate) => {
           callback({
-            type: type.split("Multi")[1],
+            type: type.split('Multi')[1],
             coordinates: coordinate,
           });
         });
         break;
-      case "GeometryCollection":
+      case 'GeometryCollection':
         geometry.geometries.forEach(callback);
         break;
       default:
@@ -1777,7 +1872,7 @@ var geometries = function () {
     }
 
     // Handle single point coordinates
-    if (typeof strippedCoords[0] === "number") {
+    if (typeof strippedCoords[0] === 'number') {
       const [x, y] = strippedCoords; // Destructure into x and y
 
       // Convert the single point using proj4
@@ -1792,106 +1887,120 @@ var geometries = function () {
   /****************************************************************************************
    * parseFile
    *
-   * Processes geographic data from a file object, applying styles and adding it as a vector
-   * layer to the map. Handles projections and updates the UI based on file loading and
-   * parsing outcomes.
+   * Handles the parsing and processing of geographic data from a given file object, managing
+   * projections and styling, and integrating parsed features as a vector layer on the map.
+   * The function dynamically adjusts to the identified CRS from the input data or defaults
+   * to a standard coordinate reference system, ensuring smooth operations and UI feedback
+   * on file processing status.
    *
    * Parameters:
-   * @param {Object} fileObj - Contains file data and styling configurations.
-   *   - {string} fileObj.filename - Name of the file.
-   *   - {string} fileObj.fileext - File extension to select the parser.
-   *   - {string} fileObj.fileContent - File's geographic content.
-   *   - {string} fileObj.color - Color for styling.
-   *   - {number} fileObj.lineopacity, fileObj.linesize, fileObj.linestyle - Line styling.
-   *   - {number} fileObj.fillOpacity - Opacity for fill areas.
-   *   - {number} fileObj.fontsize - Font size for labels.
-   *   - {string} fileObj.labelpos - Label anchor position.
-   *   - {string} fileObj.labelattribute - Attribute for labeling features.
+   * @param {Object} fileObj - Contains all relevant data and configurations for processing.
+   *   - {string} filename - Name of the input file to be processed.
+   *   - {string} orgFileext - Original file extension determining parser logic.
+   *   - {Object} fileContent - Original content of the file, usually GeoJSON format.
+   *   - {string} color - Designated color for styling the feature layer.
+   *   - {number} lineopacity, linesize, linestyle - Parameters for configuring line aesthetics.
+   *   - {number} fillOpacity - Controls opacity for filled regions within features.
+   *   - {number} fontsize - Specifies font size for feature labels.
+   *   - {string} labelpos - Defines positional anchor for labels on the map.
+   *   - {string} labelattribute - Attribute key for labeling features.
    *
    * Workflow:
-   * - Validates parser selection based on file extension.
-   * - Determines source CRS from file content, defaulting to EPSG:4326 if not specified.
-   * - Uses proj4 to transform the GeoJSON features when needed, targeting EPSG:3857.
-   * - Parses features using the appropriate parser and handles errors.
-   * - Configures labeling based on given attribute or prompts the user for selection.
-   * - Updates map with the styled layer composed of parsed features.
-   * - Manages user interface updates regarding file processing status.
+   * - Determines the source CRS from GeoJSON content; defaults to 'EPSG:4326' if unspecified.
+   * - Checks for mapped CRS in projectionMap, or dynamically fetches definitions with fetchProjString.
+   * - Engages proj4 to transform GeoJSON features to the target CRS ('EPSG:4326').
+   * - Validates presence of parsed features, handling errors gracefully and alerting the user.
+   * - Prompts user for label attribute selection if not predefined, enhancing interactivity.
+   * - Successfully positions styled feature layer in the map, reflecting parsed content.
+   * - Updates user interface elements to relay parsing status and results.
    ****************************************************************************************/
   function parseFile(fileObj) {
-    if (debug) console.log(`${scriptName}: parseFile(): called with input of:`, fileObj);
+    if (debug) console.log(`${scriptName}: parseFile(): called with input:`, fileObj);
 
-    //const fileext = fileObj.fileext.toUpperCase();
     const orgFileext = fileObj.orgFileext.toUpperCase();
     const fileContent = fileObj.fileContent;
     const filename = fileObj.filename;
 
-    // Initialize sourceCRS to a default value (e.g., EPSG:4326) to ensure it's always defined
-    let sourceCRS = "EPSG:4326"; // Default CRS if one can't be loacated in the GeoJSON most common one
+    // Default CRS if none is specified
+    let sourceCRS = 'EPSG:4326';
 
+    // Check if a CRS definition exists in the GeoJSON file
     if (fileContent.crs && fileContent.crs.properties && fileContent.crs.properties.name) {
       const projection = fileContent.crs.properties.name;
+      const mappedCRS = projectionMap[projection];
 
-      let mappedCRS = projectionMap[projection];
       if (mappedCRS) {
-        sourceCRS = mappedCRS; // Update only if a mapping exists
-        if (debug) console.log(`${scriptName}: External Projection found in file: ${projection} was mapped to: ${sourceCRS}`);
+        sourceCRS = mappedCRS;
+        if (debug) console.log(`${scriptName}: External Projection found: ${projection} mapped to: ${sourceCRS}`);
+        processFileContent();
       } else {
-        const supportedProjections = "EPSG:3035|3414|4214|4258|4267|4283|4326|25832|26901->26923|27700|32601->32660|32701->32760| ";
-        const message = `Found unsupported projection: ${projection}. <br>Supported projections are: <br>${supportedProjections}. <br>Cannot proceed without a supported projection.`;
-        console.error(`${scriptName}: Error - ${message}`);
-        WazeWrap.Alerts.error(scriptName, message);
-        return;
+        fetchProjString(projection, function (error, message) {
+          if (error) {
+            const supportedProjections = 'EPSG:3035|3414|4214|4258|4267|4283|4326|25832|26901->26923|27700|32601->32660|32701->32760|';
+            const errorMessage = `
+                        Found unsupported projection: ${projection}.
+                        Default supported projections are: ${supportedProjections}
+                        Could not source a projection definition from epsg.io.
+                        Cannot proceed without a supported projection.`;
+            console.error(`${scriptName}: Error - ${errorMessage}`);
+            WazeWrap.Alerts.error(scriptName, errorMessage);
+            toggleParsingMessage(false);
+            return;
+          } else {
+            console.log(`${scriptName}: Info: ${message}`);
+            sourceCRS = projectionMap[projection];
+            processFileContent();
+          }
+        });
       }
     } else {
-      const message = "No External projection found. <br>Defaulting to EPSG:4326 (WGS 84).";
+      const message = 'No External projection found. Defaulting to EPSG:4326 (WGS 84).';
       if (debug) {
         console.warn(`${scriptName}: Warning - ${message}`);
         WazeWrap.Alerts.info(scriptName, message);
       }
+      processFileContent();
     }
 
-    let featuresSDK;
+    function processFileContent() {
+      try {
+        const targetCRS = 'EPSG:4326'; // New WME SDK uses EPSG:4326
+        const geoJSONToParse = transformGeoJSON(fileContent, sourceCRS, targetCRS);
+        const featuresSDK = geoJSONToParse.features;
 
-    try {
-      const targetCRS = "EPSG:4326"; //New WME SDK uses EPSG:4326
-      // Transform CRS , remove Z & M, flatten geoJSON if needed!
-      const geoJSONToParse = transformGeoJSON(fileContent, sourceCRS, targetCRS);
-      // NEED TO ADD flatten LOGIC HERE
-      featuresSDK = geoJSONToParse.features;
+        if (featuresSDK.length === 0) {
+          toggleParsingMessage(false);
+          console.error(`${scriptName}: No features found in transformed GeoJSON for ${filename}.${orgFileext}.`);
+          WazeWrap.Alerts.error(`${scriptName}: No features found in transformed GeoJSON for ${filename}.${orgFileext}.`);
+          return;
+        }
 
-      if (featuresSDK.length === 0) {
+        if (debug) console.log(`${scriptName}: Found ${featuresSDK.length} features for ${filename}.${orgFileext}.`);
+
         toggleParsingMessage(false);
-        console.error(`${scriptName}: No features found in transformed GeoJSON for ${filename}.${orgFileext}.`);
-        WazeWrap.Alerts.error(`${scriptName}: No features found in transformed GeoJSON for ${filename}.${orgFileext}.`);
-        return;
-      }
 
-      if (debug) console.log(`${scriptName}: Found ${featuresSDK.length} features for ${filename}.${orgFileext}.`);
-    } catch (error) {
-      toggleParsingMessage(false);
-      console.error(`${scriptName}: Error parsing GeoJSON for ${filename}.${orgFileext}:`, error);
-      WazeWrap.Alerts.error(`${scriptName}: Error parsing GeoJSON for ${filename}.${orgFileext}:\n${error}`);
-      return;
-    }
-
-    toggleParsingMessage(false); // turned on in parsefile()
-
-    if (fileObj.labelattribute) {
-      createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS);
-    } else {
-      if (Array.isArray(featuresSDK)) {
-        if (debug) console.log(`${scriptName}: Sample features objects:`, featuresSDK.slice(0, 10));
-        presentFeaturesAttributesSDK(featuresSDK.slice(0, 50), featuresSDK.length)
-          .then((selectedAttribute) => {
-            if (selectedAttribute) {
-              fileObj.labelattribute = selectedAttribute;
-              console.log(`${scriptName}: Label attribute selected: ${fileObj.labelattribute}`);
-              createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS);
-            }
-          })
-          .catch((cancelReason) => {
-            console.warn(`${scriptName}: User cancelled attribute selection and import: ${cancelReason}`);
-          });
+        if (fileObj.labelattribute) {
+          createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS);
+        } else {
+          if (Array.isArray(featuresSDK)) {
+            if (debug) console.log(`${scriptName}: Sample feature objects:`, featuresSDK.slice(0, 10));
+            presentFeaturesAttributesSDK(featuresSDK.slice(0, 50), featuresSDK.length)
+              .then((selectedAttribute) => {
+                if (selectedAttribute) {
+                  fileObj.labelattribute = selectedAttribute;
+                  console.log(`${scriptName}: Label attribute selected: ${fileObj.labelattribute}`);
+                  createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS);
+                }
+              })
+              .catch((cancelReason) => {
+                console.warn(`${scriptName}: User cancelled attribute selection and import: ${cancelReason}`);
+              });
+          }
+        }
+      } catch (error) {
+        toggleParsingMessage(false);
+        console.error(`${scriptName}: Error parsing GeoJSON for ${filename}.${orgFileext}:`, error);
+        WazeWrap.Alerts.error(`${scriptName}: Error parsing GeoJSON for ${filename}.${orgFileext}:\n${error}`);
       }
     }
   }
@@ -1938,13 +2047,13 @@ var geometries = function () {
           formatLabel: (context) => {
             let labelTemplate = fileObj.labelattribute;
 
-            if (!labelTemplate || labelTemplate.trim() === "") {
-              return "";
+            if (!labelTemplate || labelTemplate.trim() === '') {
+              return '';
             }
 
-            labelTemplate = labelTemplate.replace(/\\n/g, "\n").replace(/<br\s*\/?>/gi, "\n");
+            labelTemplate = labelTemplate.replace(/\\n/g, '\n').replace(/<br\s*\/?>/gi, '\n');
 
-            if (!labelTemplate.includes("${")) {
+            if (!labelTemplate.includes('${')) {
               return labelTemplate;
             }
 
@@ -1953,15 +2062,15 @@ var geometries = function () {
                 attributeName = attributeName.trim();
 
                 if (context?.feature?.properties?.[attributeName]) {
-                  let attributeValue = context.feature.properties[attributeName] || "";
-                  if (typeof attributeValue !== "string") {
+                  let attributeValue = context.feature.properties[attributeName] || '';
+                  if (typeof attributeValue !== 'string') {
                     attributeValue = String(attributeValue);
                   }
-                  attributeValue = attributeValue.replace(/<br\s*\/?>/gi, "\n");
+                  attributeValue = attributeValue.replace(/<br\s*\/?>/gi, '\n');
                   return attributeValue;
                 }
 
-                return ""; // Replace with empty if attribute not found
+                return ''; // Replace with empty if attribute not found
               })
               .trim();
 
@@ -1980,10 +2089,10 @@ var geometries = function () {
           pointRadius: fileObj.fontsize,
           fontColor: fileObj.color,
           fontSize: fileObj.fontsize,
-          labelOutlineColor: "black",
+          labelOutlineColor: 'black',
           labelOutlineWidth: fileObj.fontsize / 4,
           labelAlign: fileObj.labelpos,
-          label: "${formatLabel}",
+          label: '${formatLabel}',
         };
 
         const layerConfig = {
@@ -1996,7 +2105,7 @@ var geometries = function () {
           ],
         };
 
-        let layerid = fileObj.filename.replace(/[^a-z0-9_-]/gi, "_");
+        let layerid = fileObj.filename.replace(/[^a-z0-9_-]/gi, '_');
 
         // Using the SDK to add the layer with styles and zIndexing
         // Future Idea: Consider removing the return statements to test scenarios where two files with the same name load into the same layer but contain different features.
@@ -2012,7 +2121,7 @@ var geometries = function () {
             zIndexing: true,
           });
         } catch (error) {
-          if (error.name === "InvalidStateError") {
+          if (error.name === 'InvalidStateError') {
             console.error(`${scriptName}: Layer "${fileObj.filename}" already exists.`);
             WazeWrap.Alerts.error(scriptName, `Current Layer "${fileObj.filename}" already exists.`);
             return;
@@ -2026,7 +2135,7 @@ var geometries = function () {
         // Set visibility to true for the layer
         wmeSDK.Map.setLayerVisibility({ layerName: layerid, visibility: true });
 
-        // Map features array with unique index-based IDs
+        // Map features array with unique index-based IDs  TODO:  Look into addeding the unique ID in transformGeoJSON()
         const featuresToLog = features.map((f, index) => ({
           type: f.type,
           id: f.properties.OBJECTID || `${layerid}_${index}`, // Use feature index for uniqueness
@@ -2034,37 +2143,23 @@ var geometries = function () {
           properties: f.properties,
         }));
 
-        // Initialize counters
-        let successCount = 0;
-        let errorCount = 0;
+        // Initialize counters for individual feature addition
+        let successCount = featuresToLog.length;
+        // Track the total processing time for the layer
+        const layerStartTime = performance.now();
 
-        featuresToLog.forEach((feature) => {
-          try {
-            wmeSDK.Map.addFeatureToLayer({
-              feature: feature,
-              layerName: layerid,
-            });
-            successCount++; // Increment success counter
-          } catch (error) {
-            errorCount++; // Increment error counter
-            if (error.name === "InvalidStateError") {
-              console.error(`${scriptName}: Failed to add feature with ID: ${feature.id}. The layer "${layerid}" might not exist.`);
-            } else if (error.name === "ValidationError") {
-              console.error(`${scriptName}: Validation error for feature with ID: ${feature.id}. Check geometry type and properties.`, error);
-              console.error(`${scriptName}: Feature details:`, feature);
-            } else {
-              console.error(`${scriptName}: Unexpected error adding feature with ID: ${feature.id}:`, error);
-              console.error(`${scriptName}: Feature details:`, feature);
-            }
-          }
-        });
+        wmeSDK.Map.dangerouslyAddFeaturesToLayerWithoutValidation({ features: featuresToLog, layerName: layerid });
 
-        // Log completion
-        console.log(`${scriptName}: ${successCount} features added, ${errorCount} features skipped do to errors, for layer: ${fileObj.filename}`);
+        // Handle completion logging
+        // Calculate and log the total processing time for the layer
+        const layerEndTime = performance.now();
+        const totalLayerDuration = layerEndTime - layerStartTime;
+
+        console.log(`${scriptName}: layer: ${fileObj.filename} processed in ${totalLayerDuration.toFixed(2)} ms - ${successCount} features added`);
 
         // Add group toggler logic if necessary (assuming SDK supports it)
         if (!groupToggler) {
-          groupToggler = addGroupToggler(false, "layer-switcher-group_wme_geometries", "WME Geometries");
+          groupToggler = addGroupToggler(false, 'layer-switcher-group_wme_geometries', 'WME Geometries');
         }
         addToGeoList(fileObj.filename, fileObj.color, fileObj.orgFileext, fileObj.labelattribute, externalProjection);
         addLayerToggler(groupToggler, fileObj.filename, layerid);
@@ -2074,7 +2169,7 @@ var geometries = function () {
           await storeLayer(fileObj);
         } catch (error) {
           console.error(`${scriptName}: Failed to store data in IndexedDB:`, error);
-          WazeWrap.Alerts.error("Storage Error", "Failed to store data. Ensure IndexedDB is not full and try again. Layer will not be saved.");
+          WazeWrap.Alerts.error('Storage Error', 'Failed to store data. Ensure IndexedDB is not full and try again. Layer will not be saved.');
         }
       } finally {
         toggleLoadingMessage(false); // Turn off the loading message!
@@ -2104,8 +2199,8 @@ var geometries = function () {
    *                      Rejects with an error if an operation fails.
    ****************************************************************************/
   async function storeLayer(fileObj) {
-    const transaction = db.transaction(["layers"], "readwrite");
-    const store = transaction.objectStore("layers");
+    const transaction = db.transaction(['layers'], 'readwrite');
+    const store = transaction.objectStore('layers');
 
     return new Promise((resolve, reject) => {
       const request = store.get(fileObj.filename);
@@ -2137,7 +2232,7 @@ var geometries = function () {
 
           addRequest.onerror = function (event) {
             console.error(`${scriptName}: Failed to store data in IndexedDB`, event.target.error);
-            reject(new Error("Failed to store data"));
+            reject(new Error('Failed to store data'));
           };
         } else {
           console.log(`${scriptName}: Skipping duplicate storage for file: ${fileObj.filename}`);
@@ -2147,20 +2242,20 @@ var geometries = function () {
 
       request.onerror = function (event) {
         console.error(`${scriptName}: Failed to retrieve data from IndexedDB`, event.target.error);
-        reject(new Error("Failed to retrieve data"));
+        reject(new Error('Failed to retrieve data'));
       };
     });
   }
 
   function toggleLoadingMessage(show) {
-    const existingMessage = document.getElementById("WMEGeoLoadingMessage");
+    const existingMessage = document.getElementById('WMEGeoLoadingMessage');
 
     if (show) {
       if (!existingMessage) {
-        const loadingMessage = document.createElement("div");
-        loadingMessage.id = "WMEGeoLoadingMessage";
+        const loadingMessage = document.createElement('div');
+        loadingMessage.id = 'WMEGeoLoadingMessage';
         loadingMessage.style = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 32px; background: rgba(0, 0, 0, 0.7); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); font-family: 'Arial', sans-serif; font-size: 1.1rem; text-align: center; z-index: 2000; color: #ffffff; border: 2px solid #ff5733;`;
-        loadingMessage.textContent = "WME Geometries: New Geometries Loading, please wait...";
+        loadingMessage.textContent = 'WME Geometries: New Geometries Loading, please wait...';
         document.body.appendChild(loadingMessage);
       }
     } else {
@@ -2171,14 +2266,14 @@ var geometries = function () {
   }
 
   function toggleParsingMessage(show) {
-    const existingMessage = document.getElementById("WMEGeoParsingMessage");
+    const existingMessage = document.getElementById('WMEGeoParsingMessage');
 
     if (show) {
       if (!existingMessage) {
-        const parsingMessage = document.createElement("div");
-        parsingMessage.id = "WMEGeoParsingMessage";
+        const parsingMessage = document.createElement('div');
+        parsingMessage.id = 'WMEGeoParsingMessage';
         parsingMessage.style = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 32px; background: rgba(0, 0, 0, 0.7); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); font-family: 'Arial', sans-serif; font-size: 1.1rem; text-align: center; z-index: 2000; color: #ffffff; border: 2px solid #33ff57;`;
-        parsingMessage.textContent = "WME Geometries: Parsing and converting input files, please wait...";
+        parsingMessage.textContent = 'WME Geometries: Parsing and converting input files, please wait...';
         document.body.appendChild(parsingMessage);
       }
     } else {
@@ -2204,24 +2299,24 @@ var geometries = function () {
    * - Calls `updateWhatsInView` to fill the overlay with data.
    **********************************************************************************/
   async function whatsInView() {
-    let whatsInView = document.getElementById("WMEGeowhatsInViewMessage");
+    let whatsInView = document.getElementById('WMEGeowhatsInViewMessage');
 
     if (!whatsInView) {
       // Create the overlay if it doesn't exist
-      whatsInView = document.createElement("div");
-      whatsInView.id = "WMEGeowhatsInViewMessage";
+      whatsInView = document.createElement('div');
+      whatsInView.id = 'WMEGeowhatsInViewMessage';
       whatsInView.style = `position: absolute; padding: 0; background: rgba(0, 0, 0, 0.8); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); z-index: 1000; width: 375px; height: 375px; min-width: 200px; min-height: 200px; max-width: 30vw; max-height: 40vh; left: 50%; top: 50%; transform: translate(-50%, -50%); resize: both; overflow: hidden;`;
 
-      const header = document.createElement("div");
+      const header = document.createElement('div');
       header.style = `background: #33ff57; font-weight: 300; color: black; padding: 5px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center; height: 30px; position: sticky; top: 0; cursor: move;`;
-      const title = document.createElement("span");
-      title.innerText = "WME Geo - Whats in View";
+      const title = document.createElement('span');
+      title.innerText = 'WME Geo - Whats in View';
       header.appendChild(title);
 
-      const closeButton = document.createElement("span");
-      closeButton.textContent = "X";
+      const closeButton = document.createElement('span');
+      closeButton.textContent = 'X';
       closeButton.style = `cursor: pointer; font-size: 20px; margin-left: 10px;`;
-      closeButton.addEventListener("click", () => {
+      closeButton.addEventListener('click', () => {
         whatsInView.remove();
       });
       header.appendChild(closeButton);
@@ -2244,14 +2339,14 @@ var geometries = function () {
         };
       };
 
-      const contentContainer = document.createElement("div");
-      contentContainer.id = "WMEGeowhatsInViewContent";
+      const contentContainer = document.createElement('div');
+      contentContainer.id = 'WMEGeowhatsInViewContent';
       contentContainer.style = `padding: 5px; height: calc(100% - 30px); overflow-y: auto; overflow-x: hidden; color: #ffffff; font-family: 'Arial', sans-serif; font-size: 1.0rem; text-align: left;`;
 
       whatsInView.appendChild(header);
       whatsInView.appendChild(contentContainer);
 
-      const mapElement = document.getElementsByTagName("wz-page-content")[0];
+      const mapElement = document.getElementsByTagName('wz-page-content')[0];
       if (mapElement) {
         mapElement.appendChild(whatsInView);
       } else {
@@ -2260,7 +2355,7 @@ var geometries = function () {
       }
 
       // Add custom scrollbar styles once
-      const styleElement = document.createElement("style");
+      const styleElement = document.createElement('style');
       styleElement.innerHTML = `#WMEGeowhatsInViewMessage div::-webkit-scrollbar { width: 12px; }
       #WMEGeowhatsInViewMessage div::-webkit-scrollbar-track { background: #333333; border-radius: 10px; }
       #WMEGeowhatsInViewMessage div::-webkit-scrollbar-thumb { background-color: #33ff57; border-radius: 10px; border: 2px solid transparent; }
@@ -2269,7 +2364,7 @@ var geometries = function () {
     }
 
     // Update content of the overlay (whether newly created or existing)
-    await updateWhatsInView(whatsInView); //whatsInView JS55CT
+    await updateWhatsInView(whatsInView); 
   }
 
   /********************************************************************************
@@ -2297,16 +2392,16 @@ var geometries = function () {
    * Ensures data is fetched and displayed in a structured and user-friendly format within the overlay.
    ******************************************************************************/
   async function updateWhatsInView(whatsInView) {
-    const contentContainer = whatsInView.querySelector("#WMEGeowhatsInViewContent");
+    const contentContainer = whatsInView.querySelector('#WMEGeowhatsInViewContent');
 
     if (!contentContainer) {
-      console.error("Content container not found in existing message.");
+      console.error('Content container not found in existing message.');
       return;
     }
 
-    contentContainer.innerHTML = "";
+    contentContainer.innerHTML = '';
 
-    const dataTypes = ["state", "county", "countysub", "zipcode"];
+    const dataTypes = ['state', 'county', 'countysub', 'zipcode'];
     const promises = dataTypes.map(async (dataType) => {
       try {
         return await getArcGISdata(dataType, false);
@@ -2319,7 +2414,7 @@ var geometries = function () {
     const results = await Promise.all(promises);
 
     if (!results || results.length < 4 || !results[0] || !results[1] || !results[2] || !results[3]) {
-      console.error("Failed to fetch necessary data");
+      console.error('Failed to fetch necessary data');
       return;
     }
 
@@ -2355,7 +2450,7 @@ var geometries = function () {
       }
     });
 
-    let messageContent = "";
+    let messageContent = '';
 
     // Sort states by name before processing
     const sortedStates = Object.values(states).sort((a, b) => a.name.localeCompare(b.name));
@@ -2421,80 +2516,80 @@ var geometries = function () {
       const allAttributes = features.map((feature) => Object.keys(feature.properties));
       const attributes = Array.from(new Set(allAttributes.flat()));
 
-      let attributeInput = document.createElement("div");
-      let title = document.createElement("label");
-      let propsContainer = document.createElement("div");
+      let attributeInput = document.createElement('div');
+      let title = document.createElement('label');
+      let propsContainer = document.createElement('div');
 
       // Determine the theme to set appropriate styles
-      const htmlElement = document.querySelector("html");
-      const theme = htmlElement.getAttribute("wz-theme") || "light";
+      const htmlElement = document.querySelector('html');
+      const theme = htmlElement.getAttribute('wz-theme') || 'light';
 
-      if (theme === "dark") {
+      if (theme === 'dark') {
         attributeInput.style.cssText =
-          "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background: #333; border: 3px solid #666; border-radius: 5%; display: flex; flex-direction: column;";
-        title.style.cssText = "margin-bottom: 5px; color: #ddd; align-self: center; font-size: 1.2em;";
-        propsContainer.style.cssText = "overflow-y: auto; max-height: 300px; padding: 5px; border: 3px solid #444; border-radius: 10px; ";
+          'position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background: #333; border: 3px solid #666; border-radius: 5%; display: flex; flex-direction: column;';
+        title.style.cssText = 'margin-bottom: 5px; color: #ddd; align-self: center; font-size: 1.2em;';
+        propsContainer.style.cssText = 'overflow-y: auto; max-height: 300px; padding: 5px; border: 3px solid #444; border-radius: 10px; ';
       } else {
         attributeInput.style.cssText =
-          "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background:rgb(228, 227, 227); border: 3px solid #aaa; border-radius: 5%; display: flex; flex-direction: column;";
-        title.style.cssText = "margin-bottom: 5px; color: #333; align-self: center; font-size: 1.2em;";
-        propsContainer.style.cssText = "overflow-y: auto; max-height: 300px; padding: 5px; border: 2px solid black; border-radius: 10px;";
+          'position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background:rgb(228, 227, 227); border: 3px solid #aaa; border-radius: 5%; display: flex; flex-direction: column;';
+        title.style.cssText = 'margin-bottom: 5px; color: #333; align-self: center; font-size: 1.2em;';
+        propsContainer.style.cssText = 'overflow-y: auto; max-height: 300px; padding: 5px; border: 2px solid black; border-radius: 10px;';
       }
 
       title.innerHTML = `Feature Attributes<br>Total Features: ${nbFeatures}`;
       attributeInput.appendChild(title);
 
-      let message = document.createElement("p");
-      message.style.cssText = "margin-top: 10px; color: #777; text-align: center;";
+      let message = document.createElement('p');
+      message.style.cssText = 'margin-top: 10px; color: #777; text-align: center;';
 
       attributeInput.appendChild(propsContainer);
 
       features.forEach((feature, index) => {
-        let featureHeader = document.createElement("label");
-        featureHeader.style.cssText = theme === "dark" ? "color: #ddd; font-size: 1.1em;" : "color: #333; font-size: 1.1em;";
+        let featureHeader = document.createElement('label');
+        featureHeader.style.cssText = theme === 'dark' ? 'color: #ddd; font-size: 1.1em;' : 'color: #333; font-size: 1.1em;';
         featureHeader.textContent = `Feature ${index + 1}`;
         propsContainer.appendChild(featureHeader);
 
-        let propsList = document.createElement("ul");
+        let propsList = document.createElement('ul');
         Object.keys(feature.properties).forEach((key) => {
-          let propItem = document.createElement("li");
-          propItem.style.cssText = "list-style-type: none; padding: 2px; font-size: 0.9em;";
+          let propItem = document.createElement('li');
+          propItem.style.cssText = 'list-style-type: none; padding: 2px; font-size: 0.9em;';
           propItem.innerHTML = `<span style="color:rgb(53, 134, 187);">${key}</span>: ${feature.properties[key]}`;
           propsList.appendChild(propItem);
         });
         propsContainer.appendChild(propsList);
       });
 
-      let inputLabel = document.createElement("label");
-      inputLabel.style.cssText = "display: block; margin-top: 15px;";
-      inputLabel.textContent = "Select Attribute to use for Label:";
+      let inputLabel = document.createElement('label');
+      inputLabel.style.cssText = 'display: block; margin-top: 15px;';
+      inputLabel.textContent = 'Select Attribute to use for Label:';
 
       attributeInput.appendChild(inputLabel);
 
-      let selectBox = document.createElement("select");
-      selectBox.style.cssText = "width: 90%; padding: 8px; margin-top: 5px; margin-left: 5%; margin-right: 5%; border-radius: 5px;";
+      let selectBox = document.createElement('select');
+      selectBox.style.cssText = 'width: 90%; padding: 8px; margin-top: 5px; margin-left: 5%; margin-right: 5%; border-radius: 5px;';
       attributes.forEach((attribute) => {
-        let option = document.createElement("option");
+        let option = document.createElement('option');
         option.value = attribute;
         option.textContent = attribute;
         selectBox.appendChild(option);
       });
 
-      let noLabelsOption = document.createElement("option");
-      noLabelsOption.value = "";
-      noLabelsOption.textContent = "- No Labels -";
+      let noLabelsOption = document.createElement('option');
+      noLabelsOption.value = '';
+      noLabelsOption.textContent = '- No Labels -';
       selectBox.appendChild(noLabelsOption);
 
-      let customLabelOption = document.createElement("option");
-      customLabelOption.value = "custom";
-      customLabelOption.textContent = "Custom Label";
+      let customLabelOption = document.createElement('option');
+      customLabelOption.value = 'custom';
+      customLabelOption.textContent = 'Custom Label';
       selectBox.appendChild(customLabelOption);
 
       attributeInput.appendChild(selectBox);
 
       // Dynamically apply inline styles to ensure precedence
-      let customLabelInput = document.createElement("textarea");
-      customLabelInput.className = "custom-label-input";
+      let customLabelInput = document.createElement('textarea');
+      customLabelInput.className = 'custom-label-input';
       customLabelInput.placeholder = `Enter your custom label using \${attributeName} for dynamic values.
       Feature 1
         BridgeNumber: 01995
@@ -2514,24 +2609,24 @@ var geometries = function () {
         U.S. ROUTE 6 over
         BIG RIVER`;
       customLabelInput.style.cssText =
-        "color: #5DADE2 !important; width: 90%; height: 300px; max-height: 300px; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical; display: none; margin-top: 5px; margin-left: 5%; margin-right: 5%;";
+        'color: #5DADE2 !important; width: 90%; height: 300px; max-height: 300px; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical; display: none; margin-top: 5px; margin-left: 5%; margin-right: 5%;';
       attributeInput.appendChild(customLabelInput);
 
-      selectBox.addEventListener("change", () => {
-        customLabelInput.style.display = selectBox.value === "custom" ? "block" : "none";
+      selectBox.addEventListener('change', () => {
+        customLabelInput.style.display = selectBox.value === 'custom' ? 'block' : 'none';
       });
 
-      let buttonsContainer = document.createElement("div");
-      buttonsContainer.style.cssText = "margin-top: 10px; display: flex; justify-content: flex-end; width: 90%; margin-left: 5%; margin-right: 5%;";
+      let buttonsContainer = document.createElement('div');
+      buttonsContainer.style.cssText = 'margin-top: 10px; display: flex; justify-content: flex-end; width: 90%; margin-left: 5%; margin-right: 5%;';
 
-      let overlay = document.createElement("div");
-      overlay.id = "presentFeaturesAttributesOverlay";
-      overlay.style.cssText = "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;";
+      let overlay = document.createElement('div');
+      overlay.id = 'presentFeaturesAttributesOverlay';
+      overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;';
       overlay.appendChild(attributeInput);
 
-      let importButton = createButton("Import", "#8BC34A", "#689F38", "#FFFFFF", "button");
+      let importButton = createButton('Import', '#8BC34A', '#689F38', '#FFFFFF', 'button');
       importButton.onclick = () => {
-        if (selectBox.value === "custom" && customLabelInput.value.trim() === "") {
+        if (selectBox.value === 'custom' && customLabelInput.value.trim() === '') {
           WazeWrap.Alerts.error(scriptName, "Please enter a custom label expression when selecting 'Custom Label'.");
           return;
         }
@@ -2539,20 +2634,20 @@ var geometries = function () {
         document.body.removeChild(overlay);
 
         let resolvedValue;
-        if (selectBox.value === "custom" && customLabelInput.value.trim() !== "") {
+        if (selectBox.value === 'custom' && customLabelInput.value.trim() !== '') {
           resolvedValue = customLabelInput.value.trim();
-        } else if (selectBox.value !== "- No Labels -") {
+        } else if (selectBox.value !== '- No Labels -') {
           resolvedValue = `\${${selectBox.value}}`;
         } else {
-          resolvedValue = "";
+          resolvedValue = '';
         }
         resolve(resolvedValue);
       };
 
-      let cancelButton = createButton("Cancel", "#E57373", "#D32F2F", "#FFFFFF", "button");
+      let cancelButton = createButton('Cancel', '#E57373', '#D32F2F', '#FFFFFF', 'button');
       cancelButton.onclick = () => {
         document.body.removeChild(overlay);
-        reject("Operation cancelled by the user");
+        reject('Operation cancelled by the user');
       };
 
       buttonsContainer.appendChild(importButton);
@@ -2586,20 +2681,20 @@ var geometries = function () {
    * - Appends each configured list item to the global `geolist` element for UI rendering.
    ****************************************************************************************/
   function addToGeoList(filename, color, fileext, labelattribute, externalProjection) {
-    let liObj = document.createElement("li");
-    liObj.id = filename.replace(/[^a-z0-9_-]/gi, "_");
+    let liObj = document.createElement('li');
+    liObj.id = filename.replace(/[^a-z0-9_-]/gi, '_');
     liObj.style.cssText =
-      "position: relative; padding: 2px 2px; margin: 2px 0; background: transparent; border-radius: 3px; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; font-size: 0.95em;";
+      'position: relative; padding: 2px 2px; margin: 2px 0; background: transparent; border-radius: 3px; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; font-size: 0.95em;';
 
-    liObj.addEventListener("mouseover", function () {
-      liObj.style.background = "#eaeaea";
+    liObj.addEventListener('mouseover', function () {
+      liObj.style.background = '#eaeaea';
     });
 
-    liObj.addEventListener("mouseout", function () {
-      liObj.style.background = "transparent";
+    liObj.addEventListener('mouseout', function () {
+      liObj.style.background = 'transparent';
     });
 
-    let fileText = document.createElement("span");
+    let fileText = document.createElement('span');
     fileText.style.cssText = `color: ${color}; flex-grow: 1; flex-shrink: 1; flex-basis: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 5px;`;
     fileText.innerHTML = filename;
 
@@ -2608,31 +2703,31 @@ var geometries = function () {
 
     liObj.appendChild(fileText);
 
-    let removeButton = document.createElement("button");
-    removeButton.innerHTML = "X";
-    removeButton.style.cssText = "flex: none; background-color: #E57373; color: white; border: none; padding: 0; width: 16px; height: 16px; cursor: pointer; margin-left: 3px;";
-    removeButton.addEventListener("click", () => removeGeometryLayer(filename));
+    let removeButton = document.createElement('button');
+    removeButton.innerHTML = 'X';
+    removeButton.style.cssText = 'flex: none; background-color: #E57373; color: white; border: none; padding: 0; width: 16px; height: 16px; cursor: pointer; margin-left: 3px;';
+    removeButton.addEventListener('click', () => removeGeometryLayer(filename));
     liObj.appendChild(removeButton);
 
     geolist.appendChild(liObj);
   }
 
-  function createButton(text, bgColor, mouseoverColor, textColor, type = "button", labelFor = "") {
+  function createButton(text, bgColor, mouseoverColor, textColor, type = 'button', labelFor = '') {
     let element;
 
-    if (type === "label") {
-      element = document.createElement("label");
+    if (type === 'label') {
+      element = document.createElement('label');
       element.textContent = text;
 
       if (labelFor) {
         element.htmlFor = labelFor;
       }
-    } else if (type === "input") {
-      element = document.createElement("input");
-      element.type = "button";
+    } else if (type === 'input') {
+      element = document.createElement('input');
+      element.type = 'button';
       element.value = text;
     } else {
-      element = document.createElement("button");
+      element = document.createElement('button');
       element.textContent = text;
     }
 
@@ -2640,14 +2735,14 @@ var geometries = function () {
   color: ${textColor}; box-sizing: border-box; transition: background-color 0.3s, border-color 0.3s; font-weight: bold; text-align: center; width: 95%; margin: 3px;`;
 
     // Apply !important to forcibly set color
-    element.style.setProperty("color", textColor, "important");
+    element.style.setProperty('color', textColor, 'important');
 
-    element.addEventListener("mouseover", function () {
+    element.addEventListener('mouseover', function () {
       element.style.backgroundColor = mouseoverColor;
       element.style.borderColor = mouseoverColor;
     });
 
-    element.addEventListener("mouseout", function () {
+    element.addEventListener('mouseout', function () {
       element.style.backgroundColor = bgColor;
       element.style.borderColor = bgColor;
     });
@@ -2677,7 +2772,7 @@ var geometries = function () {
    * - Logs the changes in local storage size.
    ****************************************************************************/
   async function removeGeometryLayer(filename) {
-    const layerName = filename.replace(/[^a-z0-9_-]/gi, "_");
+    const layerName = filename.replace(/[^a-z0-9_-]/gi, '_');
 
     try {
       // Use the SDK to remove the layer
@@ -2693,7 +2788,7 @@ var geometries = function () {
       }
 
       // Sanitize filename and define IDs
-      const listItemId = filename.replace(/[^a-z0-9_-]/gi, "_");
+      const listItemId = filename.replace(/[^a-z0-9_-]/gi, '_');
       const layerTogglerId = `t_${listItemId}`;
 
       // Remove the toggler item if it exists
@@ -2716,17 +2811,17 @@ var geometries = function () {
   async function removeLayerFromIndexedDB(filename) {
     if (!db) {
       // Check if the database is initialized
-      return Promise.reject(new Error("Database not initialized"));
+      return Promise.reject(new Error('Database not initialized'));
     }
 
     return new Promise((resolve, reject) => {
-      const transaction = db.transaction(["layers"], "readwrite");
-      const store = transaction.objectStore("layers");
+      const transaction = db.transaction(['layers'], 'readwrite');
+      const store = transaction.objectStore('layers');
       const request = store.delete(filename);
 
       // Transaction-level error handling
       transaction.onerror = function (event) {
-        reject(new Error("Transaction failed during deletion"));
+        reject(new Error('Transaction failed during deletion'));
       };
 
       // Request-specific success and error handling
@@ -2735,7 +2830,7 @@ var geometries = function () {
       };
 
       request.onerror = function (event) {
-        reject(new Error("Failed to delete layer from database"));
+        reject(new Error('Failed to delete layer from database'));
       };
     });
   }
@@ -2760,11 +2855,11 @@ var geometries = function () {
    **************************************************************/
   function createLayersFormats() {
     const formats = {};
-    let formathelp = "";
+    let formathelp = '';
 
     function tryCreateFormat(formatName, formatUtility) {
       try {
-        if (typeof formatUtility === "function") {
+        if (typeof formatUtility === 'function') {
           try {
             const formatInstance = new formatUtility();
             formats[formatName] = formatInstance;
@@ -2786,20 +2881,20 @@ var geometries = function () {
     }
 
     // Add GEOJSON format
-    formats["GEOJSON"] = "GEOJSON";
-    formathelp += "GEOJSON | ";
+    formats['GEOJSON'] = 'GEOJSON';
+    formathelp += 'GEOJSON | ';
     console.log(`${scriptName}: Successfully added format: GEOJSON`);
 
     // Add other formats using custom parsers or utilities
-    tryCreateFormat("KML", typeof GeoKMLer !== "undefined" && GeoKMLer);
-    tryCreateFormat("KMZ", typeof GeoKMZer !== "undefined" && GeoKMZer);
-    tryCreateFormat("GML", typeof GeoGMLer !== "undefined" && GeoGMLer);
-    tryCreateFormat("GPX", typeof GeoGPXer !== "undefined" && GeoGPXer);
-    tryCreateFormat("WKT", typeof GeoWKTer !== "undefined" && GeoWKTer);
+    tryCreateFormat('KML', typeof GeoKMLer !== 'undefined' && GeoKMLer);
+    tryCreateFormat('KMZ', typeof GeoKMZer !== 'undefined' && GeoKMZer);
+    tryCreateFormat('GML', typeof GeoGMLer !== 'undefined' && GeoGMLer);
+    tryCreateFormat('GPX', typeof GeoGPXer !== 'undefined' && GeoGPXer);
+    tryCreateFormat('WKT', typeof GeoWKTer !== 'undefined' && GeoWKTer);
 
-    if (typeof GeoSHPer !== "undefined") {
-      formats["ZIP"] = GeoSHPer;
-      formathelp += "ZIP(SHP,DBF,PRJ,CPG) | ";
+    if (typeof GeoSHPer !== 'undefined') {
+      formats['ZIP'] = GeoSHPer;
+      formathelp += 'ZIP(SHP,DBF,PRJ,CPG) | ';
       console.log(`${scriptName}: Successfully added format: ZIP (shapefile)`);
     } else {
       console.error(`${scriptName}: Shapefile support (GeoSHPer) is not available.`);
@@ -2837,35 +2932,35 @@ var geometries = function () {
     if (isDefault === true) {
       group = document.getElementById(layerSwitcherGroupItemName).parentElement.parentElement;
     } else {
-      var layerGroupsList = document.getElementsByClassName("list-unstyled togglers")[0];
-      group = document.createElement("li");
-      group.className = "group";
+      var layerGroupsList = document.getElementsByClassName('list-unstyled togglers')[0];
+      group = document.createElement('li');
+      group.className = 'group';
 
-      var togglerContainer = document.createElement("div");
-      togglerContainer.className = "layer-switcher-toggler-tree-category";
+      var togglerContainer = document.createElement('div');
+      togglerContainer.className = 'layer-switcher-toggler-tree-category';
 
-      var groupButton = document.createElement("wz-button");
-      groupButton.color = "clear-icon";
-      groupButton.size = "xs";
+      var groupButton = document.createElement('wz-button');
+      groupButton.color = 'clear-icon';
+      groupButton.size = 'xs';
 
-      var iCaretDown = document.createElement("i");
-      iCaretDown.className = "toggle-category w-icon w-icon-caret-down";
-      iCaretDown.dataset.groupId = layerSwitcherGroupItemName.replace("layer-switcher-", "").toUpperCase();
+      var iCaretDown = document.createElement('i');
+      iCaretDown.className = 'toggle-category w-icon w-icon-caret-down';
+      iCaretDown.dataset.groupId = layerSwitcherGroupItemName.replace('layer-switcher-', '').toUpperCase();
 
-      var togglerSwitch = document.createElement("wz-toggle-switch");
-      togglerSwitch.className = layerSwitcherGroupItemName + " hydrated";
+      var togglerSwitch = document.createElement('wz-toggle-switch');
+      togglerSwitch.className = layerSwitcherGroupItemName + ' hydrated';
       togglerSwitch.id = layerSwitcherGroupItemName;
       togglerSwitch.checked = true;
 
-      var label = document.createElement("label");
-      label.className = "label-text";
+      var label = document.createElement('label');
+      label.className = 'label-text';
       label.htmlFor = togglerSwitch.id;
 
-      var togglerChildrenList = document.createElement("ul");
-      togglerChildrenList.className = "collapsible-" + layerSwitcherGroupItemName.replace("layer-switcher-", "").toUpperCase();
+      var togglerChildrenList = document.createElement('ul');
+      togglerChildrenList.className = 'collapsible-' + layerSwitcherGroupItemName.replace('layer-switcher-', '').toUpperCase();
       label.appendChild(document.createTextNode(layerGroupVisibleName));
-      groupButton.addEventListener("click", layerTogglerGroupMinimizerEventHandler(iCaretDown));
-      togglerSwitch.addEventListener("click", layerTogglerGroupMinimizerEventHandler(iCaretDown));
+      groupButton.addEventListener('click', layerTogglerGroupMinimizerEventHandler(iCaretDown));
+      togglerSwitch.addEventListener('click', layerTogglerGroupMinimizerEventHandler(iCaretDown));
       groupButton.appendChild(iCaretDown);
       togglerContainer.appendChild(groupButton);
       togglerContainer.appendChild(togglerSwitch);
@@ -2899,24 +2994,24 @@ var geometries = function () {
    * - Logs the creation of the layer toggler for debugging purposes.
    *****************************************************************************/
   function addLayerToggler(groupToggler, layerName, layerId) {
-    const layer_container = groupToggler.getElementsByTagName("UL")[0];
-    const layerGroupCheckbox = groupToggler.getElementsByClassName("layer-switcher-toggler-tree-category")[0].getElementsByTagName("wz-toggle-switch")[0];
-    const toggler = document.createElement("li");
-    const togglerCheckbox = document.createElement("wz-checkbox");
-    togglerCheckbox.setAttribute("checked", "true");
+    const layer_container = groupToggler.getElementsByTagName('UL')[0];
+    const layerGroupCheckbox = groupToggler.getElementsByClassName('layer-switcher-toggler-tree-category')[0].getElementsByTagName('wz-toggle-switch')[0];
+    const toggler = document.createElement('li');
+    const togglerCheckbox = document.createElement('wz-checkbox');
+    togglerCheckbox.setAttribute('checked', 'true');
 
     // Generate ID for togglerCheckbox using layerName
-    const togglerId = "t_" + layerId;
+    const togglerId = 't_' + layerId;
     togglerCheckbox.id = togglerId;
 
-    togglerCheckbox.className = "hydrated";
+    togglerCheckbox.className = 'hydrated';
     togglerCheckbox.appendChild(document.createTextNode(layerName));
     toggler.appendChild(togglerCheckbox);
     layer_container.appendChild(toggler);
 
     // Attach event handlers using layerId to manage visibility with SDK
-    togglerCheckbox.addEventListener("change", layerTogglerEventHandler(layerId));
-    layerGroupCheckbox.addEventListener("change", layerTogglerGroupEventHandler(togglerCheckbox, layerId));
+    togglerCheckbox.addEventListener('change', layerTogglerEventHandler(layerId));
+    layerGroupCheckbox.addEventListener('change', layerTogglerGroupEventHandler(togglerCheckbox, layerId));
 
     if (debug) console.log(`${scriptName}: Layer Toggler created for ${layerName}`);
   }
@@ -2957,9 +3052,9 @@ var geometries = function () {
 
   function layerTogglerGroupMinimizerEventHandler(iCaretDown) {
     return function () {
-      const ulCollapsible = iCaretDown.closest("li").querySelector("ul");
-      iCaretDown.classList.toggle("upside-down");
-      ulCollapsible.classList.toggle("collapse-layer-switcher-group");
+      const ulCollapsible = iCaretDown.closest('li').querySelector('ul');
+      iCaretDown.classList.toggle('upside-down');
+      ulCollapsible.classList.toggle('collapse-layer-switcher-group');
     };
   }
 
@@ -2991,24 +3086,24 @@ var geometries = function () {
    * - Throws an error for invalid dataType options.
    * - Rejects the promise if JSON parsing fails or the HTTP request encounters an error.
    ****************************************************************************************/
-  function getArcGISdata(dataType = "state", returnGeo = true) {
+  function getArcGISdata(dataType = 'state', returnGeo = true) {
     // Define URLs and field names for each data type
     const CONFIG = {
       state: {
-        url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/0",
-        outFields: "BASENAME,NAME,STATE",
+        url: 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/0',
+        outFields: 'BASENAME,NAME,STATE',
       },
       county: {
-        url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/1",
-        outFields: "BASENAME,NAME,STATE,COUNTY",
+        url: 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/1',
+        outFields: 'BASENAME,NAME,STATE,COUNTY',
       },
       countysub: {
-        url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer/1",
-        outFields: "BASENAME,NAME,STATE,COUNTY",
+        url: 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer/1',
+        outFields: 'BASENAME,NAME,STATE,COUNTY',
       },
       zipcode: {
-        url: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1",
-        outFields: "BASENAME",
+        url: 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1',
+        outFields: 'BASENAME',
       },
       // Add more configurations as needed
     };
@@ -3030,7 +3125,7 @@ var geometries = function () {
         y: wgs84Center.lat,
         spatialReference: { wkid: 4326 },
       };
-      geometryType = "esriGeometryPoint";
+      geometryType = 'esriGeometryPoint';
     } else {
       // Get current map extent and visible regions
       const wgs84Extent = wmeSDK.Map.getMapExtent();
@@ -3041,7 +3136,7 @@ var geometries = function () {
         ymax: wgs84Extent[3],
         spatialReference: { wkid: 4326 },
       };
-      geometryType = "esriGeometryEnvelope";
+      geometryType = 'esriGeometryEnvelope';
     }
 
     const url = `${config.url}/query?geometry=${encodeURIComponent(JSON.stringify(geometry))}`;
@@ -3054,27 +3149,26 @@ var geometries = function () {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         url: queryString,
-        method: "GET",
+        method: 'GET',
         onload: function (response) {
           try {
             const jsonResponse = JSON.parse(response.responseText);
             // Add CRS information to the GeoJSON response
             jsonResponse.crs = {
-              type: "name",
+              type: 'name',
               properties: {
-                name: "EPSG:4326",
+                name: 'EPSG:4326',
               },
             };
             resolve(jsonResponse); // Resolve the promise with the JSON response
           } catch (error) {
-            reject(new Error("Failed to parse JSON response: " + error.message));
+            reject(new Error('Failed to parse JSON response: ' + error.message));
           }
         },
         onerror: function (error) {
-          reject(new Error("Request failed: " + error.statusText));
+          reject(new Error('Request failed: ' + error.statusText));
         },
       });
     });
   }
-};
-geometries();
+})();
