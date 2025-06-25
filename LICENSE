@@ -1,10 +1,36 @@
-This script is based on the original "[WME Geometries v1.8](https://greasyfork.org/en/scripts/8129-wme-geometries/code?version=1284539)" script by Timbones and contributors.
+/*
+  This script is based on the original "[WME Geometries v1.8](https://greasyfork.org/en/scripts/8129-wme-geometries/code?version=1284539)" 
+  script by Timbones and contributors.
 
-**Permmission to share this version with the Waze edditing community was given by Timbones in May 2025 via conversation in Discord.
+  **Permission to share this modified version with the Waze editing community was given by Timbones to JS55CT in May 2025 via conversation in Discord.**
+  
+  Given this, I share this version of the script under the following LICENSE:
 
-- **Original Author**: Timbones
-  - [Greasy Fork Profile](https://greasyfork.org/users/3339)
+  Waze Development and Editing Community License:
 
-- **Contributors**:
-  - wlodek76
-  - Twister-UK
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to use
+  the Software solely for purposes related to Waze Development and Editing,
+  including contributions to the Waze platform, map editing, and related community
+  projects, subject to the following conditions:
+
+  1. **Scope of Use**:
+     - The Software may only be used by individuals who are active participants in the Waze Development and Editing community.
+     - The Software shall not be used for any commercial purpose without prior written consent from the Licensor.
+     - Redistribution, modification, or integration of the Software in projects outside the Waze community is prohibited.
+
+  2. **Restrictions**:
+     - Unauthorized copying, sharing, or distribution of the Software outside the Waze community is expressly forbidden.
+     - The Software shall not be integrated into any tool, application, or project that is not directly related to Waze map editing or development.
+
+  3. **Contribution Back**:
+     - Modifications and improvements made to the Software must be reported back to the Licensor and, whenever possible, shared with the broader Waze Development and Editing community.
+
+  4. **Termination**:
+     - This license may be terminated by the Licensor if the terms are violated, or if the Software is used in a manner inconsistent with the intended use within the Waze community.
+
+  5. **No Warranty**:
+     - The Software is provided "as is", without warranty of any kind, express or implied. The Licensor holds no liability for any damages or issues arising from the use of the Software.
+
+  By using the Software, you agree to adhere to these terms and conditions, ensuring the Software remains beneficial and accessible to the intended community.
+*/
