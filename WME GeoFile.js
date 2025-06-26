@@ -2,7 +2,7 @@
 // @name                WME GeoFile
 // @namespace           https://github.com/JS55CT
 // @description         WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2025.06.25.02
+// @version             2025.06.26.00
 // @author              JS55CT
 // @match               https://www.waze.com/*/editor*
 // @match               https://www.waze.com/editor*
@@ -107,11 +107,14 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
   let wmeSDK;
   try {
-    wmeSDK = await bootstrap({ scriptUpdateMonitor: { downloadUrl } });
-    console.log(`${scriptName}: Bootstrap complete: All dependencies are ready.`);
+    wmeSDK = await bootstrap({ useWazeWrap: true, scriptUpdateMonitor: { downloadUrl } });
     const formatResults = createLayersFormats();
     formats = formatResults.formats;
     formathelp = formatResults.formathelp;
+    // HACK bootstrp uses "wme-ready" "Dispatched only once, after the wme-initialized, wme-logged-in, and wme-map-data-loaded events have been dispatched."
+    // But we need wmeSDK.DataModel.Countries.getTopCountry(); in init() fires with null 90% of the time, so have to wait a little!
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    console.log(`${scriptName}: Bootstrap complete: All dependencies are ready.`);
     init();
   } catch (error) {
     console.error('Error during bootstrap initialization:', error);
@@ -327,7 +330,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       //ONLY LOAD THIS SECTION if TOP COUNTRY is the Check for US and its territories */
       try {
         const wmeTopCountry = wmeSDK.DataModel.Countries.getTopCountry();
-        if (debug) console.log(`${scriptName}: Top Level Country `, wmeTopCountry);
+        console.log(`${scriptName}: Top Level Country `, wmeTopCountry.name);
 
         if (wmeTopCountry && ['US', 'GQ', 'RQ', 'VQ', 'AQ', 'CQ'].includes(wmeTopCountry.abbr)) {
           console.log(`${scriptName}: Top Level Country = ${wmeTopCountry.name} | ${wmeTopCountry.abbr}`);
