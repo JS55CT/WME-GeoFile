@@ -2,7 +2,7 @@
 // @name                WME GeoFile
 // @namespace           https://github.com/JS55CT
 // @description         WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2025.06.26.00
+// @version             2025.06.30.00
 // @author              JS55CT
 // @match               https://www.waze.com/*/editor*
 // @match               https://www.waze.com/editor*
@@ -245,7 +245,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
    * init
    *
    * Description:
-   * Initializes the user interface for the "WME Geometries" sidebar tab in the Waze Map Editor. This function sets up
+   * Initializes the user interface for the "WME GeoFile" sidebar tab in the Waze Map Editor. This function sets up
    * the DOM structure, styles, event listeners, and interactions necessary for importing and working with geometric
    * files and Well-Known Text (WKT) inputs.
    *
@@ -266,7 +266,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     console.log(`${scriptName}: Loading User Interface ...`);
 
     wmeSDK.Sidebar.registerScriptTab().then(({ tabLabel, tabPane }) => {
-      tabLabel.textContent = 'GEO';
+      tabLabel.textContent = 'GeoFile';
       tabLabel.title = `${scriptName}`;
 
       let geobox = document.createElement('div');
@@ -330,7 +330,6 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       //ONLY LOAD THIS SECTION if TOP COUNTRY is the Check for US and its territories */
       try {
         const wmeTopCountry = wmeSDK.DataModel.Countries.getTopCountry();
-        console.log(`${scriptName}: Top Level Country `, wmeTopCountry.name);
 
         if (wmeTopCountry && ['US', 'GQ', 'RQ', 'VQ', 'AQ', 'CQ'].includes(wmeTopCountry.abbr)) {
           console.log(`${scriptName}: Top Level Country = ${wmeTopCountry.name} | ${wmeTopCountry.abbr}`);
@@ -1059,6 +1058,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       WGS84: 'EPSG:4326',
       'urn:ogc:def:crs:OGC:1.3:WGS84': 'EPSG:4326',
       'WGS 84': 'EPSG:4326',
+      'WGS_84': 'EPSG:4326',
       'urn:ogc:def:crs:OGC:1.3:WGS_84': 'EPSG:4326',
       'CRS WGS84': 'EPSG:4326',
       'urn:ogc:def:crs:OGC:1.3:CRS_WGS84': 'EPSG:4326',
@@ -1074,16 +1074,19 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       'urn:ogc:def:crs:OGC:1.3:CRS_84': 'EPSG:4326',
       // NAD83 common aliases, same as EPSG:4269
       'NAD 83': 'EPSG:4269',
+      'NAD_83': 'EPSG:4269',
       'urn:ogc:def:crs:OGC:1.3:NAD_83': 'EPSG:4269',
       NAD83: 'EPSG:4269',
       'urn:ogc:def:crs:OGC:1.3:NAD83': 'EPSG:4269',
       // ETRS89 / LAEA Europe common aliases, same as EPSG:3035
       'ETRS 89': 'EPSG:3035',
+      'ETRS_89': 'EPSG:3035',
       'urn:ogc:def:crs:OGC:1.3:ETRS_89': 'EPSG:3035',
       ETRS89: 'EPSG:3035',
       'urn:ogc:def:crs:OGC:1.3:ETRS89': 'EPSG:3035',
       // NAD27 common aliases, same as EPSG:4267
       'NAD 27': 'EPSG:4267',
+      'NAD_27': 'EPSG:4267',
       'urn:ogc:def:crs:OGC:1.3:NAD_27': 'EPSG:4267',
       NAD27: 'EPSG:4267',
       'urn:ogc:def:crs:OGC:1.3:NAD27': 'EPSG:4267',
@@ -1101,6 +1104,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       'CRS::{{code}}',
       'urn:ogc:def:crs:OGC:1.3:CRS::{{code}}',
       'CRS {{code}}',
+      'CRS_{{code}}',
       'urn:ogc:def:crs:OGC:1.3:CRS_{{code}}',
       'CRS{{code}}',
       'urn:ogc:def:crs:OGC:1.3:CRS{{code}}',
@@ -1147,14 +1151,15 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         /^EPSG:(\d+)$/,
         /^urn:ogc:def:crs:EPSG:(\d+)$/,
         /^urn:ogc:def:crs:OGC:1\.3:EPSG:(\d+)$/,
-        /^EPSG:(\d+)$/,
-        /^urn:ogc:def:crs:EPSG:(\d+)$/,
-        /^urn:ogc:def:crs:OGC:1\.3:EPSG:(\d+)$/,
+        /^EPSG::(\d+)$/,
+        /^urn:ogc:def:crs:EPSG::(\d+)$/,
+        /^urn:ogc:def:crs:OGC:1\.3:EPSG::(\d+)$/,
         /^CRS:(\d+)$/,
         /^urn:ogc:def:crs:OGC:1\.3:CRS:(\d+)$/,
-        /^CRS:(\d+)$/,
-        /^urn:ogc:def:crs:OGC:1\.3:CRS:(\d+)$/,
+        /^CRS::(\d+)$/,
+        /^urn:ogc:def:crs:OGC:1\.3:CRS::(\d+)$/,
         /^CRS (\d+)$/,
+        /^CRS_(\d+)$/,
         /^urn:ogc:def:crs:OGC:1\.3:CRS_(\d+)$/,
         /^CRS(\d+)$/,
         /^urn:ogc:def:crs:OGC:1\.3:CRS(\d+)$/,
@@ -2163,7 +2168,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
         // Add group toggler logic if necessary (assuming SDK supports it)
         if (!groupToggler) {
-          groupToggler = addGroupToggler(false, 'layer-switcher-group_wme_geometries', 'WME Geometries');
+          groupToggler = addGroupToggler(false, 'layer-switcher-group_wme_geofile', 'WME GeoFile');
         }
         addToGeoList(fileObj.filename, fileObj.color, fileObj.orgFileext, fileObj.labelattribute, externalProjection);
         addLayerToggler(groupToggler, fileObj.filename, layerid);
@@ -2259,7 +2264,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         const loadingMessage = document.createElement('div');
         loadingMessage.id = 'WMEGeoLoadingMessage';
         loadingMessage.style = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 32px; background: rgba(0, 0, 0, 0.7); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); font-family: 'Arial', sans-serif; font-size: 1.1rem; text-align: center; z-index: 2000; color: #ffffff; border: 2px solid #ff5733;`;
-        loadingMessage.textContent = 'WME Geometries: New Geometries Loading, please wait...';
+        loadingMessage.textContent = 'WME GeoFile: New Geometries Loading, please wait...';
         document.body.appendChild(loadingMessage);
       }
     } else {
@@ -2277,7 +2282,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         const parsingMessage = document.createElement('div');
         parsingMessage.id = 'WMEGeoParsingMessage';
         parsingMessage.style = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 32px; background: rgba(0, 0, 0, 0.7); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); font-family: 'Arial', sans-serif; font-size: 1.1rem; text-align: center; z-index: 2000; color: #ffffff; border: 2px solid #33ff57;`;
-        parsingMessage.textContent = 'WME Geometries: Parsing and converting input files, please wait...';
+        parsingMessage.textContent = 'WME GeoFile: Parsing and converting input files, please wait...';
         document.body.appendChild(parsingMessage);
       }
     } else {
@@ -2314,7 +2319,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       const header = document.createElement('div');
       header.style = `background: #33ff57; font-weight: 300; color: black; padding: 5px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center; height: 30px; position: sticky; top: 0; cursor: move;`;
       const title = document.createElement('span');
-      title.innerText = 'WME Geo - Whats in View';
+      title.innerText = 'WME GeoFile - Whats in View';
       header.appendChild(title);
 
       const closeButton = document.createElement('span');
@@ -3050,7 +3055,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       if (!groupCheckbox.checked) {
         groupCheckbox.disabled = false;
       }
-      if (debug) console.log(`${scriptName}: WME Geometries Group Layer visibility set to ${shouldBeVisible}`);
+      if (debug) console.log(`${scriptName}: WME GeoFile Group Layer visibility set to ${shouldBeVisible}`);
     };
   }
 
