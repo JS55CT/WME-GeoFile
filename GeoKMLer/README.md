@@ -27,6 +27,9 @@ Here’s how you can use these tools in your application:
 ### Example for GeoKMLer
 
 ```javascript
+// @require             https://update.greasyfork.org/scripts/524747/1542062/GeoKMLer.js
+// @require             https://update.greasyfork.org/scripts/527113/1538395/GeoKMZer.js
+
 var geoKMLer = new GeoKMLer(); // Create a new instance of GeoKMLer
 
 // Sample KML data input

@@ -29,6 +29,9 @@ or via Tamplermonkey / GreasyFork
 Here is a simple example of how to use GeoSHPer to convert shapefile data to GeoJSON:
 
 ```javascript
+// @require  https://update.greasyfork.org/scripts/526996/1537647/GeoSHPer.js
+// @require  https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.15.0/proj4-src.js
+
 (async () => {
     const response = await fetch('path/to/your/shapefile.zip');
     const buffer = await response.arrayBuffer();

@@ -12,6 +12,8 @@ GeoWKTer is a JavaScript library designed to facilitate the conversion of Well-K
 Below is a basic example of how to use the GeoWKTer library:
 
 ```javascript
+// @require             https://update.greasyfork.org/scripts/523986/1575829/GeoWKTer.js
+
 // Initialize the GeoWKTer instance
 let geoWKTer = new GeoWKTer();
 

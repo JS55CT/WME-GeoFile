@@ -25,6 +25,8 @@ To use GeoGMLer, create an instance of `GeoGMLer` and utilize its methods to per
 ### Example
 
 ```javascript
+// @require             https://update.greasyfork.org/scripts/526229/1537672/GeoGMLer.js
+
 var geoGMLer = new GeoGMLer(); // Create a new instance of GeoGMLer
 
 // Sample GML data input

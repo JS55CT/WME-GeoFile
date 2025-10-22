@@ -23,6 +23,8 @@ To use GeoGPXer, create an instance of `GeoGPXer` and use its methods to perform
 ### Example
 
 ```javascript
+// @require             https://update.greasyfork.org/scripts/523870/1534525/GeoGPXer.js
+
 var geoGPXer = new GeoGPXer(); // Create a new instance of GeoGPXer
 
 // Sample GPX data input
