@@ -2,7 +2,7 @@
 // @name                WME GeoFile
 // @namespace           https://github.com/JS55CT
 // @description         WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2025.06.30.00
+// @version             2026.02.27.00
 // @author              JS55CT
 // @match               https://www.waze.com/*/editor*
 // @match               https://www.waze.com/editor*
@@ -84,7 +84,6 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   const downloadUrl = 'https://update.greasyfork.org/scripts/540764/WME%20GeoFile.user.js';
   let geolist;
   let debug = false;
-  let formats;
   let formathelp;
   let db;
   let groupToggler;
@@ -108,9 +107,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   let wmeSDK;
   try {
     wmeSDK = await bootstrap({ useWazeWrap: true, scriptUpdateMonitor: { downloadUrl } });
-    const formatResults = createLayersFormats();
-    formats = formatResults.formats;
-    formathelp = formatResults.formathelp;
+    formathelp = createLayersFormats().formathelp;
     // HACK bootstrp uses "wme-ready" "Dispatched only once, after the wme-initialized, wme-logged-in, and wme-map-data-loaded events have been dispatched."
     // But we need wmeSDK.DataModel.Countries.getTopCountry(); in init() fires with null 90% of the time, so have to wait a little!
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -265,48 +262,165 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   async function init() {
     console.log(`${scriptName}: Loading User Interface ...`);
 
+    // Inject modern UI styles (scoped to .wme-geofile-panel)
+    (() => {
+      if (!document.getElementById('wme-geofile-styles')) {
+        const style = document.createElement('style');
+        style.id = 'wme-geofile-styles';
+        style.textContent = `
+/* === WME GeoFile Modern UI === */
+.wme-geofile-panel { font-family: inherit; font-size: 12px; line-height: 1.4; color: var(--content_default); padding: var(--space-xs); box-sizing: border-box; }
+.wme-geofile-panel .geofile-header { background: linear-gradient(135deg, #0066cc, #0052a3); padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; color: white; }
+.wme-geofile-panel .geofile-title { font-size: 12px; font-weight: 700; letter-spacing: 0.3px; }
+.wme-geofile-panel .geofile-version { font-size: 10px; opacity: 0.8; }
+.wme-geofile-panel .geofile-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--content_p2); margin-bottom: 4px; padding: 0 2px; }
+.wme-geofile-panel .geofile-list { margin: 0 0 8px 0; padding: 0; list-style: none; background: var(--background_default); border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; min-height: 28px; }
+.wme-geofile-panel .geofile-list:empty::before { content: 'No files loaded'; display: block; padding: 6px 10px; font-size: 11px; color: var(--content_p3); font-style: italic; }
+.wme-geofile-panel .geofile-list li { position: relative; padding: 4px 8px; margin: 0; background: transparent; border-bottom: 1px solid var(--hairline); display: flex; justify-content: space-between; align-items: center; transition: background 0.15s; font-size: 11px; }
+.wme-geofile-panel .geofile-list li:last-child { border-bottom: none; }
+.wme-geofile-panel .geofile-list li:hover { background: var(--surface_default); }
+.wme-geofile-panel .geofile-list .geofile-item-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 6px; }
+.wme-geofile-panel .geofile-list .geofile-remove-btn { flex: none; background: #E57373; color: white; border: none; padding: 0; width: 16px; height: 16px; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold; display: flex; align-items: center; justify-content: center; line-height: 1; transition: background 0.15s; }
+.wme-geofile-panel .geofile-list .geofile-remove-btn:hover { background: #D32F2F; }
+.wme-geofile-panel .geofile-divider { margin: 6px 0; border: 0; border-top: 1px solid var(--separator_default); }
+.wme-geofile-panel .geofile-info { background: var(--background_default); border: 1px solid var(--hairline); border-radius: 6px; padding: 6px 8px; font-size: 11px; line-height: 1.5; color: var(--content_p1); margin-bottom: 8px; }
+.wme-geofile-panel .geofile-info a { color: var(--primary); }
+.wme-geofile-panel .geofile-card { background: var(--background_default); border: 1px solid var(--hairline); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.wme-geofile-panel .geofile-card-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--primary); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--hairline); }
+.wme-geofile-panel .geofile-card-title a { color: var(--primary); font-weight: normal; font-size: 9px; text-transform: none; letter-spacing: 0; margin-left: 4px; }
+.wme-geofile-panel .geofile-census-link { font-size: 11px; color: var(--content_p1); display: block; margin-bottom: 6px; text-decoration: none; }
+.wme-geofile-panel .geofile-census-link:hover { text-decoration: underline; }
+.wme-geofile-panel .geofile-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.wme-geofile-panel .geofile-label { font-size: 11px; font-weight: 500; color: var(--content_p1); white-space: nowrap; }
+.wme-geofile-panel .geofile-stroke-sub { font-size: 11px; font-weight: 700; color: var(--content_p1); margin: 6px 0 4px 0; }
+.wme-geofile-panel input[type="color"] { width: 40px; height: 22px; padding: 0 2px; border: 1px solid var(--hairline); border-radius: 4px; cursor: pointer; }
+.wme-geofile-panel input[type="number"] { padding: 3px 6px; border: 1px solid var(--hairline); border-radius: 4px; font-size: 12px; background: var(--surface_default); color: var(--content_default); }
+.wme-geofile-panel input[type="number"]:focus { outline: none; border-color: var(--primary); }
+.wme-geofile-panel .geofile-slider-label { font-size: 11px; color: var(--content_p1); margin-bottom: 3px; display: block; }
+.wme-geofile-panel input[type="range"] { width: 100%; height: 6px; -webkit-appearance: none; appearance: none; border-radius: 3px; outline: none; margin: 2px 0 6px 0; cursor: pointer; }
+.wme-geofile-panel input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; background: var(--primary); cursor: pointer; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.wme-geofile-panel input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: var(--primary); cursor: pointer; border-radius: 50%; border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.wme-geofile-panel .geofile-radio-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.wme-geofile-panel .geofile-radio-options { display: flex; gap: 10px; flex-wrap: wrap; }
+.wme-geofile-panel .geofile-radio-options label { display: flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; font-weight: normal; font-size: 11px; color: var(--content_p1); }
+.wme-geofile-panel .geofile-radio-options input[type="radio"] { cursor: pointer; margin: 0; }
+.wme-geofile-panel .geofile-label-pos-grid { display: flex; gap: 24px; margin-top: 4px; }
+.wme-geofile-panel .geofile-label-pos-col { display: flex; flex-direction: column; gap: 4px; }
+.wme-geofile-panel .geofile-label-pos-col-header { font-size: 11px; font-weight: 600; color: var(--content_p2); margin-bottom: 2px; }
+.wme-geofile-panel .geofile-label-pos-col label { display: flex; align-items: center; gap: 4px; cursor: pointer; margin: 0; font-weight: normal; font-size: 11px; color: var(--content_p1); }
+.wme-geofile-panel .geofile-label-pos-col input[type="radio"] { cursor: pointer; margin: 0; }
+.wme-geofile-panel .geofile-input-text { width: 100%; padding: 6px 8px; font-size: 12px; border: 1px solid var(--hairline); border-radius: 6px; box-sizing: border-box; background: var(--surface_default); color: var(--content_default); margin-bottom: 6px; }
+.wme-geofile-panel .geofile-input-text:focus { outline: none; border-color: var(--primary); }
+.wme-geofile-panel .geofile-textarea { width: 100%; height: 100px; min-height: 60px; max-height: 300px; padding: 6px 8px; font-size: 11px; border: 1px solid var(--hairline); border-radius: 6px; box-sizing: border-box; resize: vertical; background: var(--surface_default); color: var(--content_default); margin-bottom: 6px; }
+.wme-geofile-panel .geofile-textarea:focus { outline: none; border-color: var(--primary); }
+.wme-geofile-panel .geofile-btn-row { display: flex; gap: 6px; }
+.wme-geofile-panel .geofile-btn-row .geofile-btn { flex: 1; margin: 0; }
+.wme-geofile-panel .geofile-debug-row { display: flex; align-items: center; gap: 8px; }
+.wme-geofile-panel .geofile-debug-label { font-size: 11px; color: var(--content_p2); }
+.wme-geofile-panel .geofile-toggle-wrap { position: relative; display: inline-block; width: 34px; height: 18px; cursor: pointer; flex-shrink: 0; }
+.wme-geofile-panel .geofile-toggle-wrap input { opacity: 0; width: 0; height: 0; position: absolute; }
+.wme-geofile-panel .geofile-toggle-slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--hairline); border-radius: 9px; transition: background 0.3s; }
+.wme-geofile-panel .geofile-toggle-slider::before { position: absolute; content: ''; height: 12px; width: 12px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: transform 0.3s; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+.wme-geofile-panel .geofile-toggle-wrap input:checked + .geofile-toggle-slider { background: #4CAF50; }
+.wme-geofile-panel .geofile-toggle-wrap input:checked + .geofile-toggle-slider::before { transform: translateX(16px); }
+/* === WME GeoFile - Whats in View Popup === */
+#WMEGeowhatsInViewMessage { font-family: inherit; background: var(--surface_default); border: 1px solid var(--hairline); border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.15); overflow: hidden; }
+#WMEGeowhatsInViewMessage .wiv-header { background: linear-gradient(135deg, #0066cc, #0052a3); padding: 8px 10px; border-radius: 10px 10px 0 0; display: flex; justify-content: space-between; align-items: center; height: 36px; cursor: move; box-sizing: border-box; user-select: none; flex-shrink: 0; }
+#WMEGeowhatsInViewMessage .wiv-title { color: white; font-size: 12px; font-weight: 700; letter-spacing: 0.3px; display: flex; align-items: center; gap: 6px; }
+#WMEGeowhatsInViewMessage .wiv-close { color: white; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.8; background: none; border: none; padding: 2px 5px; border-radius: 4px; transition: opacity 0.2s, background 0.2s; flex-shrink: 0; }
+#WMEGeowhatsInViewMessage .wiv-close:hover { opacity: 1; background: rgba(255,255,255,0.18); }
+#WMEGeowhatsInViewMessage .wiv-content { padding: 8px 10px; height: calc(100% - 36px); overflow-y: auto; overflow-x: hidden; color: var(--content_default); font-size: 12px; line-height: 1.6; box-sizing: border-box; }
+#WMEGeowhatsInViewMessage .wiv-content::-webkit-scrollbar { width: 6px; }
+#WMEGeowhatsInViewMessage .wiv-content::-webkit-scrollbar-track { background: var(--background_default); border-radius: 3px; }
+#WMEGeowhatsInViewMessage .wiv-content::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 3px; }
+#WMEGeowhatsInViewMessage .wiv-content::-webkit-scrollbar-thumb:hover { background: var(--primary); filter: brightness(1.2); }
+#WMEGeowhatsInViewMessage .wiv-state { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--primary); margin: 8px 0 3px 0; padding-bottom: 2px; border-bottom: 1px solid var(--hairline); }
+#WMEGeowhatsInViewMessage .wiv-state:first-child { margin-top: 0; }
+#WMEGeowhatsInViewMessage .wiv-county { margin-left: 12px; font-weight: 600; color: var(--content_p1); font-size: 11px; }
+#WMEGeowhatsInViewMessage .wiv-town { margin-left: 24px; color: var(--content_p2); font-size: 11px; }
+#WMEGeowhatsInViewMessage .wiv-zip-section { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--separator_default); }
+#WMEGeowhatsInViewMessage .wiv-zip-header { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--primary); margin-bottom: 4px; }
+#WMEGeowhatsInViewMessage .wiv-zip { margin-left: 12px; color: var(--content_p2); font-size: 11px; }
+/* === Feature Attributes Modal === */
+#presentFeaturesAttributesOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
+#presentFeaturesAttributesOverlay .fa-modal { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: 1001; width: 80%; max-width: 600px; min-width: 320px; min-height: 320px; height: 65vh; max-height: 80vh; background: var(--surface_default); border: 1px solid var(--hairline); border-radius: 10px; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.25); font-family: inherit; overflow: auto; resize: both; }
+#presentFeaturesAttributesOverlay .fa-modal-header { background: linear-gradient(135deg, #0066cc, #0052a3); padding: 10px 14px; flex-shrink: 0; }
+#presentFeaturesAttributesOverlay .fa-modal-title { color: white; font-size: 12px; font-weight: 700; text-align: center; letter-spacing: 0.3px; }
+#presentFeaturesAttributesOverlay .fa-modal-subtitle { color: rgba(255,255,255,0.75); font-size: 11px; text-align: center; margin-top: 2px; }
+#presentFeaturesAttributesOverlay .fa-modal-body { padding: 12px; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+#presentFeaturesAttributesOverlay .fa-props-container { overflow-y: auto; flex: 1; min-height: 0; padding: 6px 8px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--background_default); margin-bottom: 10px; }
+#presentFeaturesAttributesOverlay .fa-props-container::-webkit-scrollbar { width: 6px; }
+#presentFeaturesAttributesOverlay .fa-props-container::-webkit-scrollbar-track { background: var(--background_default); border-radius: 3px; }
+#presentFeaturesAttributesOverlay .fa-props-container::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 3px; }
+#presentFeaturesAttributesOverlay .fa-feature-header { color: var(--content_default); font-size: 11px; font-weight: 700; display: block; margin: 8px 0 3px 0; padding-bottom: 2px; border-bottom: 1px solid var(--hairline); }
+#presentFeaturesAttributesOverlay .fa-feature-header:first-child { margin-top: 0; }
+#presentFeaturesAttributesOverlay .fa-prop-list { list-style: none; padding: 0; margin: 0 0 4px 0; }
+#presentFeaturesAttributesOverlay .fa-prop-item { padding: 1px 0; font-size: 11px; color: var(--content_p1); line-height: 1.5; }
+#presentFeaturesAttributesOverlay .fa-prop-key { color: var(--primary); font-weight: 500; }
+#presentFeaturesAttributesOverlay .fa-select-label { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 600; color: var(--content_p1); flex-shrink: 0; }
+#presentFeaturesAttributesOverlay .fa-select { width: 100%; padding: 6px 8px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface_default); color: var(--content_default); font-family: inherit; font-size: 12px; margin-bottom: 8px; box-sizing: border-box; flex-shrink: 0; }
+#presentFeaturesAttributesOverlay .fa-select:focus { outline: none; border-color: var(--primary); }
+#presentFeaturesAttributesOverlay .fa-custom-label { width: 100%; height: 150px; padding: 6px 8px; font-size: 11px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface_default); color: var(--primary); font-family: inherit; resize: vertical; box-sizing: border-box; display: none; margin-bottom: 8px; flex-shrink: 0; }
+#presentFeaturesAttributesOverlay .fa-custom-label:focus { outline: none; border-color: var(--primary); }
+#presentFeaturesAttributesOverlay .fa-btn-row { display: flex; gap: 8px; flex-shrink: 0; }
+#presentFeaturesAttributesOverlay .fa-btn-row button { flex: 1; width: auto !important; margin-bottom: 0 !important; }
+/* === WME GeoFile - Toast Messages === */
+#WMEGeoLoadingMessage, #WMEGeoParsingMessage { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 12px 18px; background: var(--surface_default); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.1); font-family: inherit; font-size: 12px; font-weight: 500; z-index: 2000; color: var(--content_default); display: flex; align-items: center; gap: 10px; min-width: 260px; }
+#WMEGeoLoadingMessage { border-left: 4px solid var(--primary); }
+#WMEGeoParsingMessage { border-left: 4px solid #4CAF50; }
+#WMEGeoLoadingMessage .geo-toast-icon { color: var(--primary); font-size: 15px; flex-shrink: 0; }
+#WMEGeoParsingMessage .geo-toast-icon { color: #4CAF50; font-size: 15px; flex-shrink: 0; }
+#WMEGeoLoadingMessage .geo-toast-text, #WMEGeoParsingMessage .geo-toast-text { color: var(--content_p1); line-height: 1.4; }
+        `;
+        document.head.appendChild(style);
+      }
+    })();
+
     wmeSDK.Sidebar.registerScriptTab().then(({ tabLabel, tabPane }) => {
       tabLabel.textContent = 'GeoFile';
       tabLabel.title = `${scriptName}`;
 
+      tabPane.classList.add('wme-geofile-panel');
+
       let geobox = document.createElement('div');
       tabPane.appendChild(geobox);
 
-      let geotitle = document.createElement('div');
-      geotitle.innerHTML = GM_info.script.name;
-      geotitle.style.cssText = 'text-align: center; font-size: 1.1em; font-weight: bold;';
-      geobox.appendChild(geotitle);
+      // === Header ===
+      let header = document.createElement('div');
+      header.className = 'geofile-header';
+      header.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;">
+          <i class="fa fa-file-code-o" style="font-size:14px;opacity:0.9;"></i>
+          <span class="geofile-title">${GM_info.script.name}</span>
+        </div>
+        <span class="geofile-version">v${GM_info.script.version}</span>
+      `;
+      geobox.appendChild(header);
 
-      let geoversion = document.createElement('div');
-      geoversion.innerHTML = 'v ' + GM_info.script.version;
-      geoversion.style.cssText = 'text-align: center; font-size: 0.9em;';
-      geobox.appendChild(geoversion);
-
-      let hr = document.createElement('hr');
-      hr.style.cssText = 'margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid;';
-      geobox.appendChild(hr);
+      // === Loaded Files Section ===
+      let filesLabel = document.createElement('div');
+      filesLabel.className = 'geofile-section-label';
+      filesLabel.textContent = 'Loaded Files';
+      geobox.appendChild(filesLabel);
 
       geolist = document.createElement('ul');
-      geolist.style.cssText = 'margin: 5px 0; padding: 5px;';
+      geolist.className = 'geofile-list';
       geobox.appendChild(geolist);
 
-      let hr1 = document.createElement('hr');
-      hr1.style.cssText = 'margin-top: 3px; margin-bottom: 3px; border: 0; border-top: 1px solid;';
-      geobox.appendChild(hr1);
-
       let geoform = document.createElement('form');
-      geoform.style.cssText = 'display: flex; flex-direction: column; gap: 0px;';
+      geoform.style.cssText = 'display: flex; flex-direction: column;';
       geoform.id = 'geoform';
       geobox.appendChild(geoform);
 
+      // === Import File Button ===
       let fileContainer = document.createElement('div');
-      fileContainer.style.cssText = 'position: relative; display: inline-block;';
+      fileContainer.style.cssText = 'position: relative; display: block; margin-bottom: 6px;';
 
       let inputfile = document.createElement('input');
       inputfile.type = 'file';
       inputfile.id = 'GeometryFile';
       inputfile.title = '.geojson, .gml or .wkt';
-      inputfile.style.cssText = 'opacity: 0; position: absolute; top: 0; left: 0; width: 95%; height: 100%; cursor: pointer; pointer-events: none;';
+      inputfile.style.cssText = 'opacity: 0; position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: pointer; pointer-events: none;';
       fileContainer.appendChild(inputfile);
 
       let customLabel = createButton('Import GEO File', '#8BC34A', '#689F38', '#FFFFFF', 'label', 'GeometryFile');
@@ -315,103 +429,104 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
       inputfile.addEventListener('change', addGeometryLayer, false);
 
-      let notes = document.createElement('p');
+      // === Format Info ===
+      let notes = document.createElement('div');
+      notes.className = 'geofile-info';
       notes.innerHTML = `
-    <b>Formats:</b><br>
-    ${formathelp}<br>
-    <b>EPSG:</b> Default codes supported:<br>
-    | 3035 | 3414 | 4214 | 4258 | 4267 | 4283 |<br>
-    | 4326 | 25832 | 26901->26923 | 27700 |<br>
-    | 32601->32660 | 32701->32760 |<br>
-    | All others dynamically sourced from espg.io |`;
-      notes.style.cssText = 'display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;';
+        <strong>Formats:</strong> ${formathelp}<br>
+        <strong>EPSG</strong> defaults: 3035 | 3414 | 4214 | 4258 | 4267 | 4283 | 4326
+        25832 | 26901&#8594;26923 | 27700 | 32601&#8594;32660 | 32701&#8594;32760<br>
+        All others sourced from <a href="https://epsg.io" target="_blank">epsg.io</a>
+      `;
       geoform.appendChild(notes);
 
-      //ONLY LOAD THIS SECTION if TOP COUNTRY is the Check for US and its territories */
+      // === US Census Section (US only) ===
       try {
         const wmeTopCountry = wmeSDK.DataModel.Countries.getTopCountry();
 
         if (wmeTopCountry && ['US', 'GQ', 'RQ', 'VQ', 'AQ', 'CQ'].includes(wmeTopCountry.abbr)) {
           console.log(`${scriptName}: Top Level Country = ${wmeTopCountry.name} | ${wmeTopCountry.abbr}`);
 
-          let hrElement0 = document.createElement('hr');
-          hrElement0.style.cssText = 'margin: 5px 0; border: 0; border-top: 1px solid';
-          geoform.appendChild(hrElement0);
+          let hr0 = document.createElement('hr');
+          hr0.className = 'geofile-divider';
+          geoform.appendChild(hr0);
 
-          let usCensusB = document.createElement('p');
-          usCensusB.innerHTML = `
-        <b><a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_main.html" target="_blank"; text-decoration: underline;">
-          US Census Bureau:
-        </a></b>`;
-          usCensusB.style.cssText = 'display: block; font-size: 0.9em; margin-left: 0px; margin-bottom: 0px;';
-          geoform.appendChild(usCensusB);
+          let censusCard = document.createElement('div');
+          censusCard.className = 'geofile-card';
 
-          // State Boundary Button
+          let censusTitle = document.createElement('div');
+          censusTitle.className = 'geofile-card-title';
+          censusTitle.innerHTML = '<i class="fa fa-flag" style="margin-right:5px;"></i>US Census Bureau';
+          censusCard.appendChild(censusTitle);
+
+          let censusLink = document.createElement('a');
+          censusLink.href = 'https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_main.html';
+          censusLink.target = '_blank';
+          censusLink.className = 'geofile-census-link';
+          censusLink.textContent = 'TIGERweb Map Services \u2197';
+          censusCard.appendChild(censusLink);
+
           const stateBoundaryButtonContainer = createButton('Draw State Boundary', '#E57373', '#D32F2F', '#FFFFFF', 'input');
-          stateBoundaryButtonContainer.onclick = () => {
-            drawBoundary('state');
-          };
-          geoform.appendChild(stateBoundaryButtonContainer);
+          stateBoundaryButtonContainer.onclick = () => { drawBoundary('state'); };
+          censusCard.appendChild(stateBoundaryButtonContainer);
 
-          // County Boundary Button
           const countyBoundaryButtonContainer = createButton('Draw County Boundary', '#8BC34A', '#689F38', '#FFFFFF', 'input');
-          countyBoundaryButtonContainer.onclick = () => {
-            drawBoundary('county');
-          };
-          geoform.appendChild(countyBoundaryButtonContainer);
+          countyBoundaryButtonContainer.onclick = () => { drawBoundary('county'); };
+          censusCard.appendChild(countyBoundaryButtonContainer);
 
-          // countySub Boundary Button
           const countySubBoundaryButtonContainer = createButton('Draw County Sub Boundary', '#42A5F5', '#1976D2', '#FFFFFF', 'input');
-          countySubBoundaryButtonContainer.onclick = () => {
-            drawBoundary('countysub');
-          };
-          geoform.appendChild(countySubBoundaryButtonContainer);
+          countySubBoundaryButtonContainer.onclick = () => { drawBoundary('countysub'); };
+          censusCard.appendChild(countySubBoundaryButtonContainer);
 
-          // ZipCode Boundary Button
           const zipCodeBoundaryButtonContainer = createButton('Draw Zip Code Boundary', '#6F66D2', '#645CBD', '#FFFFFF', 'input');
-          zipCodeBoundaryButtonContainer.onclick = () => {
-            drawBoundary('zipcode');
-          };
-          geoform.appendChild(zipCodeBoundaryButtonContainer);
+          zipCodeBoundaryButtonContainer.onclick = () => { drawBoundary('zipcode'); };
+          censusCard.appendChild(zipCodeBoundaryButtonContainer);
 
           const whatsInViewButtonContainer = createButton('Whats in View', '#BA68C8', '#9C27B0', '#FFFFFF', 'input');
-          whatsInViewButtonContainer.onclick = () => {
-            whatsInView();
-          };
-          geoform.appendChild(whatsInViewButtonContainer);
+          whatsInViewButtonContainer.onclick = () => { whatsInView(); };
+          censusCard.appendChild(whatsInViewButtonContainer);
+
+          geoform.appendChild(censusCard);
         } else {
           console.warn(`${scriptName}: Unable to determine the top country. The map might be zoomed out too far.`);
         }
       } catch (error) {
         console.warn(`${scriptName}: Unable to determine top country. Reason:`, error);
-      } // END OF Check for US and its territories / US Census Bureau spacific inputs
+      }
 
-      let hrElement1 = document.createElement('hr');
-      hrElement1.style.cssText = 'margin: 5px 0; border: 0; border-top: 1px solid';
-      geoform.appendChild(hrElement1);
+      let hr1 = document.createElement('hr');
+      hr1.className = 'geofile-divider';
+      geoform.appendChild(hr1);
 
-      let inputContainer = document.createElement('div');
-      inputContainer.style.cssText = 'display: flex; flex-direction: column; gap: 5px; margin-top: 10px;';
+      // === Style Settings Card ===
+      let settingsCard = document.createElement('div');
+      settingsCard.className = 'geofile-card';
 
+      let settingsTitle = document.createElement('div');
+      settingsTitle.className = 'geofile-card-title';
+      settingsTitle.innerHTML = '<i class="fa fa-paint-brush" style="margin-right:5px;"></i>Style Settings';
+      settingsCard.appendChild(settingsTitle);
+
+      // Color + Font Size row
       let colorFontSizeRow = document.createElement('div');
-      colorFontSizeRow.style.cssText = 'display: flex; justify-content: normal; align-items: center; gap: 0px;';
+      colorFontSizeRow.className = 'geofile-row';
 
       let input_color_label = document.createElement('label');
       input_color_label.setAttribute('for', 'color');
-      input_color_label.innerHTML = 'Color: ';
-      input_color_label.style.cssText = 'font-weight: normal; flex-shrink: 0; margin-right: 5px;';
+      input_color_label.className = 'geofile-label';
+      input_color_label.textContent = 'Color:';
 
       let input_color = document.createElement('input');
       input_color.type = 'color';
       input_color.id = 'color';
       input_color.value = '#00bfff';
       input_color.name = 'color';
-      input_color.style.cssText = 'width: 60px;';
 
       let input_font_size_label = document.createElement('label');
       input_font_size_label.setAttribute('for', 'font_size');
-      input_font_size_label.innerHTML = 'Font Size: ';
-      input_font_size_label.style.cssText = 'margin-left: 40px; font-weight: normal; flex-shrink: 0; margin-right: 5px;';
+      input_font_size_label.className = 'geofile-label';
+      input_font_size_label.style.marginLeft = 'auto';
+      input_font_size_label.textContent = 'Font Size:';
 
       let input_font_size = document.createElement('input');
       input_font_size.type = 'number';
@@ -421,23 +536,19 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       input_font_size.name = 'font_size';
       input_font_size.value = '12';
       input_font_size.step = '1.0';
-      input_font_size.style.cssText = 'width: 50px; text-align: center;';
+      input_font_size.style.width = '50px';
 
       colorFontSizeRow.appendChild(input_color_label);
       colorFontSizeRow.appendChild(input_color);
       colorFontSizeRow.appendChild(input_font_size_label);
       colorFontSizeRow.appendChild(input_font_size);
-      inputContainer.appendChild(colorFontSizeRow);
+      settingsCard.appendChild(colorFontSizeRow);
 
-      // Row for fill opacity input
-      let fillOpacityRow = document.createElement('div');
-      fillOpacityRow.style.cssText = `display: flex; flex-direction: column;`;
-
-      // Polygon Fill Opacity
+      // Fill Opacity
       let input_fill_opacity_label = document.createElement('label');
       input_fill_opacity_label.setAttribute('for', 'fill_opacity');
-      input_fill_opacity_label.innerHTML = `Fill Opacity % [${(0.05 * 100).toFixed()}]`;
-      input_fill_opacity_label.style.cssText = `font-weight: normal;`;
+      input_fill_opacity_label.className = 'geofile-slider-label';
+      input_fill_opacity_label.innerHTML = `Fill Opacity: <strong>${(0.05 * 100).toFixed()}%</strong>`;
 
       let input_fill_opacity = document.createElement('input');
       input_fill_opacity.type = 'range';
@@ -447,81 +558,39 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       input_fill_opacity.step = '0.01';
       input_fill_opacity.value = '0.05';
       input_fill_opacity.name = 'fill_opacity';
-      input_fill_opacity.style.cssText = `width: 100%; appearance: none; height: 12px; border-radius: 5px; outline: none;`;
 
-      // Thumb styling via CSS pseudo-elements
-      const styleElement = document.createElement('style');
-      styleElement.textContent = `
-    input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 15px; /* Thumb width */
-    height: 15px; /* Thumb height */
-    background: #808080;  /* Thumb color */
-    cursor: pointer; /* Switch cursor to pointer when hovering the thumb */
-    border-radius: 50%;
-   }
-   input[type=range]::-moz-range-thumb {
-    width: 15px;
-    height: 15px;
-    background: #808080;
-    cursor: pointer;
-    border-radius: 50%;
-  }
-  input[type=range]::-ms-thumb {
-    width: 15px;
-    height: 15px;
-    background: #808080;
-    cursor: pointer;
-    border-radius: 50%;
-  }
-  `;
-
-      document.head.appendChild(styleElement);
-
-      // Initialize with the input color's current value and opacity
       let updateOpacityInputStyles = () => {
         let color = input_color.value;
         let opacityValue = input_fill_opacity.value;
         let rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}, ${opacityValue})`;
-
         input_fill_opacity.style.backgroundColor = rgbaColor;
         input_fill_opacity.style.border = `2px solid ${color}`;
       };
 
       updateOpacityInputStyles();
 
-      // Event listener to update the label dynamically
       input_fill_opacity.addEventListener('input', function () {
-        input_fill_opacity_label.innerHTML = `Fill Opacity % [${Math.round(this.value * 100)}]`;
+        input_fill_opacity_label.innerHTML = `Fill Opacity: <strong>${Math.round(this.value * 100)}%</strong>`;
         updateOpacityInputStyles();
       });
 
-      // Append elements to the fill opacity row
-      fillOpacityRow.appendChild(input_fill_opacity_label);
-      fillOpacityRow.appendChild(input_fill_opacity);
+      settingsCard.appendChild(input_fill_opacity_label);
+      settingsCard.appendChild(input_fill_opacity);
 
-      // Append the fill opacity row to the input container
-      inputContainer.appendChild(fillOpacityRow);
+      // Line Stroke sub-heading
+      let lineStrokeSubLabel = document.createElement('div');
+      lineStrokeSubLabel.className = 'geofile-stroke-sub';
+      lineStrokeSubLabel.textContent = 'Line Stroke:';
+      settingsCard.appendChild(lineStrokeSubLabel);
 
-      // Section for line stroke settings
-      let lineStrokeSection = document.createElement('div');
-      lineStrokeSection.style.cssText = `display: flex; flex-direction: column; margin-top: 10px;`;
-
-      // Line stroke section label
-      let lineStrokeSectionLabel = document.createElement('span');
-      lineStrokeSectionLabel.innerText = 'Line Stroke Settings:';
-      lineStrokeSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 10px;`;
-      lineStrokeSection.appendChild(lineStrokeSectionLabel);
-
-      // Line Stroke Size
+      // Size row
       let lineStrokeSizeRow = document.createElement('div');
-      lineStrokeSizeRow.style.cssText = `display: flex; align-items: center;`;
+      lineStrokeSizeRow.className = 'geofile-row';
 
       let line_stroke_size_label = document.createElement('label');
       line_stroke_size_label.setAttribute('for', 'line_size');
-      line_stroke_size_label.innerHTML = 'Size:';
-      line_stroke_size_label.style.cssText = `font-weight: normal; margin-right: 5px;`;
+      line_stroke_size_label.className = 'geofile-label';
+      line_stroke_size_label.textContent = 'Size:';
 
       let line_stroke_size = document.createElement('input');
       line_stroke_size.type = 'number';
@@ -531,20 +600,23 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       line_stroke_size.name = 'line_size';
       line_stroke_size.value = '1';
       line_stroke_size.step = '.5';
-      line_stroke_size.style.cssText = `width: 50px;`;
+      line_stroke_size.style.width = '50px';
 
       lineStrokeSizeRow.appendChild(line_stroke_size_label);
       lineStrokeSizeRow.appendChild(line_stroke_size);
-      lineStrokeSection.appendChild(lineStrokeSizeRow);
+      settingsCard.appendChild(lineStrokeSizeRow);
 
-      // Line Stroke Style
+      // Style radio row
       let lineStrokeStyleRow = document.createElement('div');
-      lineStrokeStyleRow.style.cssText = `display: flex; align-items: center; gap: 10px; margin-top: 5px; margin-bottom: 5px;`;
+      lineStrokeStyleRow.className = 'geofile-radio-row';
 
       let line_stroke_types_label = document.createElement('span');
-      line_stroke_types_label.innerText = 'Style:';
-      line_stroke_types_label.style.cssText = `font-weight: normal;`;
+      line_stroke_types_label.className = 'geofile-label';
+      line_stroke_types_label.textContent = 'Style:';
       lineStrokeStyleRow.appendChild(line_stroke_types_label);
+
+      let strokeRadioOptions = document.createElement('div');
+      strokeRadioOptions.className = 'geofile-radio-options';
 
       let line_stroke_types = [
         { id: 'solid', value: 'Solid' },
@@ -552,42 +624,25 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         { id: 'dot', value: 'Dot' },
       ];
       for (const type of line_stroke_types) {
-        let radioContainer = document.createElement('div');
-        radioContainer.style.cssText = `display: flex; align-items: center; gap: 5px;`;
-
+        let radioWrapper = document.createElement('label');
         let radio = document.createElement('input');
         radio.type = 'radio';
         radio.id = type.id;
         radio.value = type.id;
         radio.name = 'line_stroke_style';
-        radio.style.cssText = `margin: 0; vertical-align: middle;`;
-
-        if (type.id === 'solid') {
-          radio.checked = true;
-        }
-
-        let label = document.createElement('label');
-        label.setAttribute('for', radio.id);
-        label.innerHTML = type.value;
-        label.style.cssText = `font-weight: normal; margin: 0; line-height: 1;`;
-
-        radioContainer.appendChild(radio);
-        radioContainer.appendChild(label);
-
-        lineStrokeStyleRow.appendChild(radioContainer);
+        if (type.id === 'solid') radio.checked = true;
+        radioWrapper.appendChild(radio);
+        radioWrapper.appendChild(document.createTextNode(type.value));
+        strokeRadioOptions.appendChild(radioWrapper);
       }
-
-      lineStrokeSection.appendChild(lineStrokeStyleRow);
-      inputContainer.appendChild(lineStrokeSection);
+      lineStrokeStyleRow.appendChild(strokeRadioOptions);
+      settingsCard.appendChild(lineStrokeStyleRow);
 
       // Line Stroke Opacity
-      let lineStrokeOpacityRow = document.createElement('div');
-      lineStrokeOpacityRow.style.cssText = `display: flex; flex-direction: column;`;
-
       let line_stroke_opacity_label = document.createElement('label');
       line_stroke_opacity_label.setAttribute('for', 'line_stroke_opacity');
-      line_stroke_opacity_label.innerHTML = 'Opacity % [100]';
-      line_stroke_opacity_label.style.cssText = `font-weight: normal;`;
+      line_stroke_opacity_label.className = 'geofile-slider-label';
+      line_stroke_opacity_label.innerHTML = 'Stroke Opacity: <strong>100%</strong>';
 
       let line_stroke_opacity = document.createElement('input');
       line_stroke_opacity.type = 'range';
@@ -597,7 +652,6 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       line_stroke_opacity.step = '.05';
       line_stroke_opacity.value = '1';
       line_stroke_opacity.name = 'line_stroke_opacity';
-      line_stroke_opacity.style.cssText = `width: 100%; appearance: none; height: 12px; border-radius: 5px; outline: none;`;
 
       const updateLineOpacityInputStyles = () => {
         let color = input_color.value;
@@ -610,7 +664,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       updateLineOpacityInputStyles();
 
       line_stroke_opacity.addEventListener('input', function () {
-        line_stroke_opacity_label.innerHTML = `Opacity % [${Math.round(this.value * 100)}]`;
+        line_stroke_opacity_label.innerHTML = `Stroke Opacity: <strong>${Math.round(this.value * 100)}%</strong>`;
         updateLineOpacityInputStyles();
       });
 
@@ -619,39 +673,30 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         updateOpacityInputStyles();
       });
 
-      lineStrokeOpacityRow.appendChild(line_stroke_opacity_label);
-      lineStrokeOpacityRow.appendChild(line_stroke_opacity);
+      settingsCard.appendChild(line_stroke_opacity_label);
+      settingsCard.appendChild(line_stroke_opacity);
+      geoform.appendChild(settingsCard);
 
-      // Append the line stroke opacity row to the input container
-      inputContainer.appendChild(lineStrokeOpacityRow);
+      // === Label Position Card ===
+      let labelCard = document.createElement('div');
+      labelCard.className = 'geofile-card';
 
-      // Adding a horizontal break before Label Position
-      let hrElement2 = document.createElement('hr');
-      hrElement2.style.cssText = `margin: 5px 0; border: 0; border-top: 1px solid`;
-      inputContainer.appendChild(hrElement2);
+      let labelCardTitle = document.createElement('div');
+      labelCardTitle.className = 'geofile-card-title';
+      labelCardTitle.innerHTML = '<i class="fa fa-text-height" style="margin-right:5px;"></i>Label Position';
+      labelCard.appendChild(labelCardTitle);
 
-      // Section for label position
-      let labelPositionSection = document.createElement('div');
-      labelPositionSection.style.cssText = `display: flex; flex-direction: column;`;
-
-      // Label position section label
-      let labelPositionSectionLabel = document.createElement('span');
-      labelPositionSectionLabel.innerText = 'Label Position Settings:';
-      labelPositionSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 5px;`;
-      labelPositionSection.appendChild(labelPositionSectionLabel);
-
-      // Container for horizontal and vertical positioning options
       let labelPositionContainer = document.createElement('div');
-      labelPositionContainer.style.cssText = `display: flex; margin-left: 10px; gap: 80px;`;
+      labelPositionContainer.className = 'geofile-label-pos-grid';
 
-      // Column for horizontal alignment
+      // Horizontal column
       let horizontalColumn = document.createElement('div');
-      horizontalColumn.style.cssText = `display: flex; flex-direction: column; gap: 5px;`;
+      horizontalColumn.className = 'geofile-label-pos-col';
 
-      let horizontalLabel = document.createElement('span');
-      horizontalLabel.innerText = 'Horizontal:';
-      horizontalLabel.style.cssText = `font-weight: normal;`;
-      horizontalColumn.appendChild(horizontalLabel);
+      let horizontalColHeader = document.createElement('div');
+      horizontalColHeader.className = 'geofile-label-pos-col-header';
+      horizontalColHeader.textContent = 'Horizontal';
+      horizontalColumn.appendChild(horizontalColHeader);
 
       let label_pos_horizontal = [
         { id: 'l', value: 'Left' },
@@ -659,38 +704,26 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         { id: 'r', value: 'Right' },
       ];
       for (const pos of label_pos_horizontal) {
-        let radioHorizontalRow = document.createElement('div');
-        radioHorizontalRow.style.cssText = `display: flex; align-items: center; gap: 5px;`;
-
+        let radioWrapper = document.createElement('label');
         let radio = document.createElement('input');
         radio.type = 'radio';
         radio.id = pos.id;
         radio.value = pos.id;
         radio.name = 'label_pos_horizontal';
-        radio.style.cssText = `margin: 0; vertical-align: middle;`;
-
-        let label = document.createElement('label');
-        label.setAttribute('for', radio.id);
-        label.innerHTML = pos.value;
-        label.style.cssText = `font-weight: normal; margin: 0; line-height: 1;`;
-
-        if (radio.id === 'c') {
-          radio.checked = true;
-        }
-
-        radioHorizontalRow.appendChild(radio);
-        radioHorizontalRow.appendChild(label);
-        horizontalColumn.appendChild(radioHorizontalRow);
+        if (radio.id === 'c') radio.checked = true;
+        radioWrapper.appendChild(radio);
+        radioWrapper.appendChild(document.createTextNode(pos.value));
+        horizontalColumn.appendChild(radioWrapper);
       }
 
-      // Column for vertical alignment
+      // Vertical column
       let verticalColumn = document.createElement('div');
-      verticalColumn.style.cssText = `display: flex; flex-direction: column; gap: 5px;`;
+      verticalColumn.className = 'geofile-label-pos-col';
 
-      let verticalLabel = document.createElement('span');
-      verticalLabel.innerText = 'Vertical:';
-      verticalLabel.style.cssText = `font-weight: normal;`;
-      verticalColumn.appendChild(verticalLabel);
+      let verticalColHeader = document.createElement('div');
+      verticalColHeader.className = 'geofile-label-pos-col-header';
+      verticalColHeader.textContent = 'Vertical';
+      verticalColumn.appendChild(verticalColHeader);
 
       let label_pos_vertical = [
         { id: 't', value: 'Top' },
@@ -698,73 +731,53 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         { id: 'b', value: 'Bottom' },
       ];
       for (const pos of label_pos_vertical) {
-        let radioVerticalRow = document.createElement('div');
-        radioVerticalRow.style.cssText = `display: flex; align-items: center; gap: 5px;`;
-
+        let radioWrapper = document.createElement('label');
         let radio = document.createElement('input');
         radio.type = 'radio';
         radio.id = pos.id;
         radio.value = pos.id;
         radio.name = 'label_pos_vertical';
-        radio.style.cssText = `margin: 0; vertical-align: middle;`;
-
-        let label = document.createElement('label');
-        label.setAttribute('for', radio.id);
-        label.innerHTML = pos.value;
-        label.style.cssText = `font-weight: normal; margin: 0; line-height: 1;`;
-
-        if (radio.id === 'm') {
-          radio.checked = true;
-        }
-
-        radioVerticalRow.appendChild(radio);
-        radioVerticalRow.appendChild(label);
-        verticalColumn.appendChild(radioVerticalRow);
+        if (radio.id === 'm') radio.checked = true;
+        radioWrapper.appendChild(radio);
+        radioWrapper.appendChild(document.createTextNode(pos.value));
+        verticalColumn.appendChild(radioWrapper);
       }
 
-      // Append columns to the label position container
       labelPositionContainer.appendChild(horizontalColumn);
       labelPositionContainer.appendChild(verticalColumn);
-      labelPositionSection.appendChild(labelPositionContainer);
-      inputContainer.appendChild(labelPositionSection);
-      geoform.appendChild(inputContainer);
+      labelCard.appendChild(labelPositionContainer);
+      geoform.appendChild(labelCard);
 
-      // Adding a horizontal break before the WKT input section
-      let hrElement3 = document.createElement('hr');
-      hrElement3.style.cssText = `margin: 5px 0; border: 0; border-top: 1px solid`;
-      geoform.appendChild(hrElement3);
+      // === WKT Input Card ===
+      let hr3 = document.createElement('hr');
+      hr3.className = 'geofile-divider';
+      geoform.appendChild(hr3);
 
-      // New label for the Text Area for WKT input section
-      let wktSectionLabel = document.createElement('div');
-      wktSectionLabel.innerHTML = 'WKT Input: (<a href="https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry" target="_blank">WKT Format</a> )';
-      wktSectionLabel.style.cssText = `font-weight: bold; margin-bottom: 5px; margin-top: 5px; display: block;`;
-      geoform.appendChild(wktSectionLabel);
+      let wktCard = document.createElement('div');
+      wktCard.className = 'geofile-card';
 
-      // Text Area for WKT input
-      let wktContainer = document.createElement('div');
-      wktContainer.style.cssText = `display: flex; flex-direction: column; gap: 5px;`;
+      let wktCardTitle = document.createElement('div');
+      wktCardTitle.className = 'geofile-card-title';
+      wktCardTitle.innerHTML = '<i class="fa fa-code" style="margin-right:5px;"></i>WKT Input <a href="https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry" target="_blank">What is WKT? \u2197</a>';
+      wktCard.appendChild(wktCardTitle);
 
-      // Input for WKT Name
       let input_WKT_name = document.createElement('input');
       input_WKT_name.type = 'text';
       input_WKT_name.id = 'input_WKT_name';
       input_WKT_name.name = 'input_WKT_name';
       input_WKT_name.placeholder = 'Name of WKT';
-      input_WKT_name.style.cssText = `padding: 8px; font-size: 1rem; border: 2px solid; border-radius: 5px; width: 100%; box-sizing: border-box;`;
-      wktContainer.appendChild(input_WKT_name);
+      input_WKT_name.className = 'geofile-input-text';
+      wktCard.appendChild(input_WKT_name);
 
-      // Text Area for WKT input
       let input_WKT = document.createElement('textarea');
       input_WKT.id = 'input_WKT';
       input_WKT.name = 'input_WKT';
       input_WKT.placeholder = 'POINT(X Y)  LINESTRING (X Y, X Y,...)  POLYGON(X Y, X Y, X Y,...) etc....';
-      input_WKT.style.cssText = `width: 100%; height: 10rem; min-height: 5rem; max-height: 40rem; padding: 8px; font-size: 1rem; border: 2px solid; border-radius: 5px; box-sizing: border-box; resize: vertical;`;
-      // Restrict resizing to vertical
-      wktContainer.appendChild(input_WKT);
+      input_WKT.className = 'geofile-textarea';
+      wktCard.appendChild(input_WKT);
 
-      // Container for the buttons
       let buttonContainer = document.createElement('div');
-      buttonContainer.style.cssText = `display: flex; gap: 45px;`;
+      buttonContainer.className = 'geofile-btn-row';
 
       let submit_WKT_btn = createButton('Import WKT', '#8BC34A', '#689F38', '#FFFFFF', 'input');
       submit_WKT_btn.id = 'submit_WKT_btn';
@@ -778,56 +791,49 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       clear_WKT_btn.addEventListener('click', clear_WKT_input);
       buttonContainer.appendChild(clear_WKT_btn);
 
-      wktContainer.appendChild(buttonContainer);
-      geoform.appendChild(wktContainer); // Append the container to the form
+      wktCard.appendChild(buttonContainer);
+      geoform.appendChild(wktCard);
 
-      // Add Toggle Button for Debug
-      let debugToggleContainer = document.createElement('div');
-      debugToggleContainer.style.cssText = `display: flex; align-items: center; margin-top: 15px;`;
+      // === Debug Toggle ===
+      let debugCard = document.createElement('div');
+      debugCard.className = 'geofile-card';
+      debugCard.style.marginTop = '2px';
 
-      let debugToggleLabel = document.createElement('label');
-      debugToggleLabel.style.cssText = `margin-left: 10px;`;
-
-      const updateLabel = () => {
-        debugToggleLabel.innerText = `Debug mode ${debug ? 'ON' : 'OFF'}`;
-      };
+      let debugRow = document.createElement('div');
+      debugRow.className = 'geofile-debug-row';
 
       let debugSwitchWrapper = document.createElement('label');
-      debugSwitchWrapper.style.cssText = `position: relative; display: inline-block; width: 40px; height: 20px; border: 1px solid #ccc; border-radius: 20px;`;
+      debugSwitchWrapper.className = 'geofile-toggle-wrap';
 
       let debugToggleSwitch = document.createElement('input');
       debugToggleSwitch.type = 'checkbox';
-      debugToggleSwitch.style.cssText = `opacity: 0; width: 0; height: 0;`;
 
       let switchSlider = document.createElement('span');
-      switchSlider.style.cssText = `position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px;`;
+      switchSlider.className = 'geofile-toggle-slider';
 
-      let innerSpan = document.createElement('span');
-      innerSpan.style.cssText = `position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;`;
+      debugSwitchWrapper.appendChild(debugToggleSwitch);
+      debugSwitchWrapper.appendChild(switchSlider);
 
-      switchSlider.appendChild(innerSpan);
+      let debugToggleLabel = document.createElement('span');
+      debugToggleLabel.className = 'geofile-debug-label';
 
-      const updateSwitchState = () => {
-        switchSlider.style.backgroundColor = debug ? '#8BC34A' : '#ccc';
-        innerSpan.style.transform = debug ? 'translateX(20px)' : 'translateX(0)';
+      const updateLabel = () => {
+        debugToggleLabel.textContent = `Debug mode ${debug ? 'ON' : 'OFF'}`;
       };
 
       debugToggleSwitch.checked = debug;
       updateLabel();
-      updateSwitchState();
 
       debugToggleSwitch.addEventListener('change', () => {
         debug = debugToggleSwitch.checked;
         updateLabel();
-        updateSwitchState();
         console.log(`${scriptName}: Debug mode is now ${debug ? 'enabled' : 'disabled'}`);
       });
 
-      debugSwitchWrapper.appendChild(debugToggleSwitch);
-      debugSwitchWrapper.appendChild(switchSlider);
-      debugToggleContainer.appendChild(debugSwitchWrapper);
-      debugToggleContainer.appendChild(debugToggleLabel);
-      geoform.appendChild(debugToggleContainer);
+      debugRow.appendChild(debugSwitchWrapper);
+      debugRow.appendChild(debugToggleLabel);
+      debugCard.appendChild(debugRow);
+      geoform.appendChild(debugCard);
 
       console.log(`${scriptName}: User Interface Loaded!`);
     });
@@ -850,7 +856,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     try {
       await initDatabase(); // Now you can safely call functions that use the db
       console.log(`${scriptName}: IndexedDB initialized successfully!`);
-      loadLayers();
+      await loadLayers();
     } catch (error) {
       console.error(`${scriptName}: Application Initialization Error:`, error);
     }
@@ -1379,7 +1385,8 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         }
 
         // Create the layer object and invoke parseFile since the layer does not exist
-        const obj = new layerStoreObj(geojson, color, 'GEOJSON', layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, `${layerName}`, 'GEOJSON');
+        const labelTemplate = item === 'zipcode' ? 'ZIP CODE: ${BASENAME}' : '${NAME}';
+        const obj = new layerStoreObj(geojson, color, 'GEOJSON', layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelTemplate, 'GEOJSON');
         parseFile(obj);
       })
       .catch((error) => {
@@ -1410,6 +1417,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   function addGeometryLayer() {
     const fileList = document.getElementById('GeometryFile');
     const file = fileList.files[0];
+    if (!file) return; // dialog was cancelled — no file selected
     fileList.value = '';
 
     const fileName = file.name;
@@ -1597,6 +1605,12 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       });
     };
 
+    reader.onerror = () => {
+      const msg = reader.error?.message || 'Unknown error reading file';
+      console.error(`${scriptName}: FileReader error:`, reader.error);
+      WazeWrap.Alerts.error(scriptName, `Failed to read file "${file.name}": ${msg}`);
+    };
+
     if (fileext === 'ZIP' || fileext === 'KMZ') {
       reader.readAsArrayBuffer(file);
     } else {
@@ -1708,6 +1722,8 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       geomEach(feature.geometry, (geometry) => {
         const type = geometry === null ? null : geometry.type;
         switch (type) {
+          case null:
+            break; // null geometry is valid GeoJSON — skip silently
           case 'Point':
           case 'LineString':
           case 'Polygon':
@@ -1776,6 +1792,8 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     geomEach(geometry, (geom) => {
       const type = geom === null ? null : geom.type;
       switch (type) {
+        case null:
+          break; // null geometry is valid GeoJSON — skip silently
         case 'Point':
         case 'LineString':
         case 'Polygon':
@@ -1822,6 +1840,8 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   function geomEach(geometry, callback) {
     const type = geometry === null ? null : geometry.type;
     switch (type) {
+      case null:
+        break; // null geometry is valid GeoJSON — skip silently
       case 'Point':
       case 'LineString':
       case 'Polygon':
@@ -1980,7 +2000,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         if (featuresSDK.length === 0) {
           toggleParsingMessage(false);
           console.error(`${scriptName}: No features found in transformed GeoJSON for ${filename}.${orgFileext}.`);
-          WazeWrap.Alerts.error(`${scriptName}: No features found in transformed GeoJSON for ${filename}.${orgFileext}.`);
+          WazeWrap.Alerts.error(scriptName, `No features found in transformed GeoJSON for ${filename}.${orgFileext}.`);
           return;
         }
 
@@ -1989,7 +2009,9 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         toggleParsingMessage(false);
 
         if (fileObj.labelattribute) {
-          createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS);
+          createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS).catch((error) => {
+            console.error(`${scriptName}: Error creating layer:`, error);
+          });
         } else {
           if (Array.isArray(featuresSDK)) {
             if (debug) console.log(`${scriptName}: Sample feature objects:`, featuresSDK.slice(0, 10));
@@ -1998,7 +2020,9 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
                 if (selectedAttribute) {
                   fileObj.labelattribute = selectedAttribute;
                   console.log(`${scriptName}: Label attribute selected: ${fileObj.labelattribute}`);
-                  createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS);
+                  createLayerWithLabelSDK(fileObj, featuresSDK, sourceCRS).catch((error) => {
+                    console.error(`${scriptName}: Error creating layer:`, error);
+                  });
                 }
               })
               .catch((cancelReason) => {
@@ -2009,7 +2033,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       } catch (error) {
         toggleParsingMessage(false);
         console.error(`${scriptName}: Error parsing GeoJSON for ${filename}.${orgFileext}:`, error);
-        WazeWrap.Alerts.error(`${scriptName}: Error parsing GeoJSON for ${filename}.${orgFileext}:\n${error}`);
+        WazeWrap.Alerts.error(scriptName, `Error parsing GeoJSON for ${filename}.${orgFileext}:\n${error}`);
       }
     }
   }
@@ -2049,141 +2073,141 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   async function createLayerWithLabelSDK(fileObj, features, externalProjection) {
     toggleLoadingMessage(true); // Show the user the loading message!
 
-    const delayDuration = 300;
-    setTimeout(async () => {
-      try {
-        let labelContext = {
-          formatLabel: (context) => {
-            let labelTemplate = fileObj.labelattribute;
+    // Yield to the UI thread so the loading message renders before heavy work starts
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
-            if (!labelTemplate || labelTemplate.trim() === '') {
-              return '';
-            }
+    try {
+      let labelContext = {
+        formatLabel: (context) => {
+          let labelTemplate = fileObj.labelattribute;
 
-            labelTemplate = labelTemplate.replace(/\\n/g, '\n').replace(/<br\s*\/?>/gi, '\n');
-
-            if (!labelTemplate.includes('${')) {
-              return labelTemplate;
-            }
-
-            labelTemplate = labelTemplate
-              .replace(/\${(.*?)}/g, (match, attributeName) => {
-                attributeName = attributeName.trim();
-
-                if (context?.feature?.properties?.[attributeName]) {
-                  let attributeValue = context.feature.properties[attributeName] || '';
-                  if (typeof attributeValue !== 'string') {
-                    attributeValue = String(attributeValue);
-                  }
-                  attributeValue = attributeValue.replace(/<br\s*\/?>/gi, '\n');
-                  return attributeValue;
-                }
-
-                return ''; // Replace with empty if attribute not found
-              })
-              .trim();
-
-            return labelTemplate;
-          },
-        };
-
-        const layerStyle = {
-          stroke: true,
-          strokeColor: fileObj.color,
-          strokeOpacity: fileObj.lineopacity,
-          strokeWidth: fileObj.linesize,
-          strokeDashstyle: fileObj.linestyle,
-          fillColor: fileObj.color,
-          fillOpacity: fileObj.fillOpacity,
-          pointRadius: fileObj.fontsize,
-          fontColor: fileObj.color,
-          fontSize: fileObj.fontsize,
-          labelOutlineColor: 'black',
-          labelOutlineWidth: fileObj.fontsize / 4,
-          labelAlign: fileObj.labelpos,
-          label: '${formatLabel}',
-        };
-
-        const layerConfig = {
-          styleContext: labelContext,
-          styleRules: [
-            {
-              predicate: () => true,
-              style: layerStyle,
-            },
-          ],
-        };
-
-        let layerid = fileObj.filename.replace(/[^a-z0-9_-]/gi, '_');
-
-        // Using the SDK to add the layer with styles and zIndexing
-        // Future Idea: Consider removing the return statements to test scenarios where two files with the same name load into the same layer but contain different features.
-        // Potential Behavior: Only the second file might get saved to IndexedDB for reload purposes. This might need upstream handling in parserFile().
-        // Enhancement: Implement a prompt to ask users if they want to merge new file loads into existing layers.
-        // Option: Provide a selection popup for users to choose which layer to merge if layers already exist.
-        // Current Approach: For now, we stop execution and inform the user if the layer name is already in use.
-        try {
-          wmeSDK.Map.addLayer({
-            layerName: layerid,
-            styleRules: layerConfig.styleRules,
-            styleContext: layerConfig.styleContext,
-            zIndexing: true,
-          });
-        } catch (error) {
-          if (error.name === 'InvalidStateError') {
-            console.error(`${scriptName}: Layer "${fileObj.filename}" already exists.`);
-            WazeWrap.Alerts.error(scriptName, `Current Layer "${fileObj.filename}" already exists.`);
-            return;
-          } else {
-            console.error(`${scriptName}: Unexpected error:`, error);
-            WazeWrap.Alerts.error(scriptName, `Unexpected error creating Layer "${fileObj.filename}"`);
-            return;
+          if (!labelTemplate || labelTemplate.trim() === '') {
+            return '';
           }
+
+          labelTemplate = labelTemplate.replace(/\\n/g, '\n').replace(/<br\s*\/?>/gi, '\n');
+
+          if (!labelTemplate.includes('${')) {
+            return labelTemplate;
+          }
+
+          labelTemplate = labelTemplate
+            .replace(/\${(.*?)}/g, (_match, attributeName) => {
+              attributeName = attributeName.trim();
+
+              if (context?.feature?.properties != null && attributeName in context.feature.properties) {
+                let attributeValue = context.feature.properties[attributeName] ?? '';
+                if (typeof attributeValue !== 'string') {
+                  attributeValue = String(attributeValue);
+                }
+                attributeValue = attributeValue.replace(/<br\s*\/?>/gi, '\n');
+                return attributeValue;
+              }
+
+              return ''; // Replace with empty if attribute not found
+            })
+            .trim();
+
+          return labelTemplate;
+        },
+      };
+
+      const layerStyle = {
+        stroke: true,
+        strokeColor: fileObj.color,
+        strokeOpacity: fileObj.lineopacity,
+        strokeWidth: fileObj.linesize,
+        strokeDashstyle: fileObj.linestyle,
+        fillColor: fileObj.color,
+        fillOpacity: fileObj.fillOpacity,
+        pointRadius: fileObj.fontsize,
+        fontColor: fileObj.color,
+        fontSize: fileObj.fontsize,
+        labelOutlineColor: 'black',
+        labelOutlineWidth: fileObj.fontsize / 4,
+        labelAlign: fileObj.labelpos,
+        label: '${formatLabel}',
+      };
+
+      const layerConfig = {
+        styleContext: labelContext,
+        styleRules: [
+          {
+            predicate: () => true,
+            style: layerStyle,
+          },
+        ],
+      };
+
+      let layerid = fileObj.filename.replace(/[^a-z0-9_-]/gi, '_');
+
+      // Using the SDK to add the layer with styles and zIndexing
+      // Future Idea: Consider removing the return statements to test scenarios where two files with the same name load into the same layer but contain different features.
+      // Potential Behavior: Only the second file might get saved to IndexedDB for reload purposes. This might need upstream handling in parserFile().
+      // Enhancement: Implement a prompt to ask users if they want to merge new file loads into existing layers.
+      // Option: Provide a selection popup for users to choose which layer to merge if layers already exist.
+      // Current Approach: For now, we stop execution and inform the user if the layer name is already in use.
+      try {
+        wmeSDK.Map.addLayer({
+          layerName: layerid,
+          styleRules: layerConfig.styleRules,
+          styleContext: layerConfig.styleContext,
+          zIndexing: true,
+        });
+      } catch (error) {
+        if (error.name === 'InvalidStateError') {
+          console.error(`${scriptName}: Layer "${fileObj.filename}" already exists.`);
+          WazeWrap.Alerts.error(scriptName, `Current Layer "${fileObj.filename}" already exists.`);
+          return;
+        } else {
+          console.error(`${scriptName}: Unexpected error:`, error);
+          WazeWrap.Alerts.error(scriptName, `Unexpected error creating Layer "${fileObj.filename}"`);
+          return;
         }
-
-        // Set visibility to true for the layer
-        wmeSDK.Map.setLayerVisibility({ layerName: layerid, visibility: true });
-
-        // Map features array with unique index-based IDs  TODO:  Look into addeding the unique ID in transformGeoJSON()
-        const featuresToLog = features.map((f, index) => ({
-          type: f.type,
-          id: f.properties.OBJECTID || `${layerid}_${index}`, // Use feature index for uniqueness
-          geometry: f.geometry,
-          properties: f.properties,
-        }));
-
-        // Initialize counters for individual feature addition
-        let successCount = featuresToLog.length;
-        // Track the total processing time for the layer
-        const layerStartTime = performance.now();
-
-        wmeSDK.Map.dangerouslyAddFeaturesToLayerWithoutValidation({ features: featuresToLog, layerName: layerid });
-
-        // Handle completion logging
-        // Calculate and log the total processing time for the layer
-        const layerEndTime = performance.now();
-        const totalLayerDuration = layerEndTime - layerStartTime;
-
-        console.log(`${scriptName}: layer: ${fileObj.filename} processed in ${totalLayerDuration.toFixed(2)} ms - ${successCount} features added`);
-
-        // Add group toggler logic if necessary (assuming SDK supports it)
-        if (!groupToggler) {
-          groupToggler = addGroupToggler(false, 'layer-switcher-group_wme_geofile', 'WME GeoFile');
-        }
-        addToGeoList(fileObj.filename, fileObj.color, fileObj.orgFileext, fileObj.labelattribute, externalProjection);
-        addLayerToggler(groupToggler, fileObj.filename, layerid);
-
-        // Check and store layers in IndexedDB
-        try {
-          await storeLayer(fileObj);
-        } catch (error) {
-          console.error(`${scriptName}: Failed to store data in IndexedDB:`, error);
-          WazeWrap.Alerts.error('Storage Error', 'Failed to store data. Ensure IndexedDB is not full and try again. Layer will not be saved.');
-        }
-      } finally {
-        toggleLoadingMessage(false); // Turn off the loading message!
       }
-    }, delayDuration);
+
+      // Set visibility to true for the layer
+      wmeSDK.Map.setLayerVisibility({ layerName: layerid, visibility: true });
+
+      // Map features array with unique index-based IDs  TODO:  Look into addeding the unique ID in transformGeoJSON()
+      const featuresToLog = features.map((f, index) => ({
+        type: f.type,
+        id: f.properties.OBJECTID || `${layerid}_${index}`, // Use feature index for uniqueness
+        geometry: f.geometry,
+        properties: f.properties,
+      }));
+
+      // Initialize counters for individual feature addition
+      let successCount = featuresToLog.length;
+      // Track the total processing time for the layer
+      const layerStartTime = performance.now();
+
+      wmeSDK.Map.dangerouslyAddFeaturesToLayerWithoutValidation({ features: featuresToLog, layerName: layerid });
+
+      // Handle completion logging
+      // Calculate and log the total processing time for the layer
+      const layerEndTime = performance.now();
+      const totalLayerDuration = layerEndTime - layerStartTime;
+
+      console.log(`${scriptName}: layer: ${fileObj.filename} processed in ${totalLayerDuration.toFixed(2)} ms - ${successCount} features added`);
+
+      // Add group toggler logic if necessary (assuming SDK supports it)
+      if (!groupToggler) {
+        groupToggler = addGroupToggler(false, 'layer-switcher-group_wme_geofile', 'WME GeoFile');
+      }
+      addToGeoList(fileObj.filename, fileObj.color, fileObj.orgFileext, fileObj.labelattribute, externalProjection);
+      addLayerToggler(groupToggler, fileObj.filename, layerid);
+
+      // Check and store layers in IndexedDB
+      try {
+        await storeLayer(fileObj);
+      } catch (error) {
+        console.error(`${scriptName}: Failed to store data in IndexedDB:`, error);
+        WazeWrap.Alerts.error('Storage Error', 'Failed to store data. Ensure IndexedDB is not full and try again. Layer will not be saved.');
+      }
+    } finally {
+      toggleLoadingMessage(false); // Turn off the loading message!
+    }
   }
 
   /****************************************************************************
@@ -2263,8 +2287,16 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       if (!existingMessage) {
         const loadingMessage = document.createElement('div');
         loadingMessage.id = 'WMEGeoLoadingMessage';
-        loadingMessage.style = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 32px; background: rgba(0, 0, 0, 0.7); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); font-family: 'Arial', sans-serif; font-size: 1.1rem; text-align: center; z-index: 2000; color: #ffffff; border: 2px solid #ff5733;`;
-        loadingMessage.textContent = 'WME GeoFile: New Geometries Loading, please wait...';
+
+        const icon = document.createElement('i');
+        icon.className = 'fa fa-spinner fa-spin geo-toast-icon';
+        loadingMessage.appendChild(icon);
+
+        const text = document.createElement('span');
+        text.className = 'geo-toast-text';
+        text.textContent = 'Loading new geometries, please wait\u2026';
+        loadingMessage.appendChild(text);
+
         document.body.appendChild(loadingMessage);
       }
     } else {
@@ -2281,8 +2313,16 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       if (!existingMessage) {
         const parsingMessage = document.createElement('div');
         parsingMessage.id = 'WMEGeoParsingMessage';
-        parsingMessage.style = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 32px; background: rgba(0, 0, 0, 0.7); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); font-family: 'Arial', sans-serif; font-size: 1.1rem; text-align: center; z-index: 2000; color: #ffffff; border: 2px solid #33ff57;`;
-        parsingMessage.textContent = 'WME GeoFile: Parsing and converting input files, please wait...';
+
+        const icon = document.createElement('i');
+        icon.className = 'fa fa-cog fa-spin geo-toast-icon';
+        parsingMessage.appendChild(icon);
+
+        const text = document.createElement('span');
+        text.className = 'geo-toast-text';
+        text.textContent = 'Parsing and converting input files, please wait\u2026';
+        parsingMessage.appendChild(text);
+
         document.body.appendChild(parsingMessage);
       }
     } else {
@@ -2314,32 +2354,35 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       // Create the overlay if it doesn't exist
       whatsInView = document.createElement('div');
       whatsInView.id = 'WMEGeowhatsInViewMessage';
-      whatsInView.style = `position: absolute; padding: 0; background: rgba(0, 0, 0, 0.8); border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); z-index: 1000; width: 375px; height: 375px; min-width: 200px; min-height: 200px; max-width: 30vw; max-height: 40vh; left: 50%; top: 50%; transform: translate(-50%, -50%); resize: both; overflow: hidden;`;
+      whatsInView.style.cssText = `position: absolute; z-index: 1000; width: 375px; height: 375px; min-width: 200px; min-height: 200px; max-width: 30vw; max-height: 40vh; left: 50%; top: 50%; transform: translate(-50%, -50%); resize: both;`;
 
       const header = document.createElement('div');
-      header.style = `background: #33ff57; font-weight: 300; color: black; padding: 5px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center; height: 30px; position: sticky; top: 0; cursor: move;`;
+      header.className = 'wiv-header';
+
       const title = document.createElement('span');
-      title.innerText = 'WME GeoFile - Whats in View';
+      title.className = 'wiv-title';
+      title.innerHTML = `<i class="fa fa-map-marker" style="opacity:0.9;"></i> WME GeoFile \u2014 What\u2019s in View`;
       header.appendChild(title);
 
-      const closeButton = document.createElement('span');
-      closeButton.textContent = 'X';
-      closeButton.style = `cursor: pointer; font-size: 20px; margin-left: 10px;`;
+      const closeButton = document.createElement('button');
+      closeButton.className = 'wiv-close';
+      closeButton.textContent = '\u00D7';
+      closeButton.title = 'Close';
       closeButton.addEventListener('click', () => {
         whatsInView.remove();
       });
       header.appendChild(closeButton);
 
       header.onmousedown = (event) => {
+        if (event.target === closeButton) return;
         event.preventDefault();
-        const initialX = event.clientX;
-        const initialY = event.clientY;
-        const offsetX = initialX - whatsInView.offsetLeft;
-        const offsetY = initialY - whatsInView.offsetTop;
+        const offsetX = event.clientX - whatsInView.offsetLeft;
+        const offsetY = event.clientY - whatsInView.offsetTop;
 
         document.onmousemove = (ev) => {
           whatsInView.style.left = `${ev.clientX - offsetX}px`;
           whatsInView.style.top = `${ev.clientY - offsetY}px`;
+          whatsInView.style.transform = 'none';
         };
 
         document.onmouseup = () => {
@@ -2350,7 +2393,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
       const contentContainer = document.createElement('div');
       contentContainer.id = 'WMEGeowhatsInViewContent';
-      contentContainer.style = `padding: 5px; height: calc(100% - 30px); overflow-y: auto; overflow-x: hidden; color: #ffffff; font-family: 'Arial', sans-serif; font-size: 1.0rem; text-align: left;`;
+      contentContainer.className = 'wiv-content';
 
       whatsInView.appendChild(header);
       whatsInView.appendChild(contentContainer);
@@ -2360,16 +2403,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         mapElement.appendChild(whatsInView);
       } else {
         console.warn("DOM Element with the tag Name 'wz-page-content' not found.");
-        //document.body.appendChild(whatsInView);
       }
-
-      // Add custom scrollbar styles once
-      const styleElement = document.createElement('style');
-      styleElement.innerHTML = `#WMEGeowhatsInViewMessage div::-webkit-scrollbar { width: 12px; }
-      #WMEGeowhatsInViewMessage div::-webkit-scrollbar-track { background: #333333; border-radius: 10px; }
-      #WMEGeowhatsInViewMessage div::-webkit-scrollbar-thumb { background-color: #33ff57; border-radius: 10px; border: 2px solid transparent; }
-      #WMEGeowhatsInViewMessage div::-webkit-scrollbar-thumb:hover { background-color: #28d245; }`;
-      document.head.appendChild(styleElement);
     }
 
     // Update content of the overlay (whether newly created or existing)
@@ -2459,28 +2493,35 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       }
     });
 
-    let messageContent = '';
+    const frag = document.createDocumentFragment();
 
     // Sort states by name before processing
     const sortedStates = Object.values(states).sort((a, b) => a.name.localeCompare(b.name));
 
     sortedStates.forEach((state) => {
-      messageContent += `<div style="margin-left: 0;"><strong>${state.name.toUpperCase()}:</strong></div>`;
+      const stateEl = document.createElement('div');
+      stateEl.className = 'wiv-state';
+      stateEl.textContent = state.name.toUpperCase();
+      frag.appendChild(stateEl);
 
       // Sort counties by name within each state
       const sortedCounties = Object.values(state.counties).sort((a, b) => a.name.localeCompare(b.name));
 
       sortedCounties.forEach((county) => {
-        messageContent += `<div style="margin-left: 20px;"><strong>${county.name}:</strong></div>`;
+        const countyEl = document.createElement('div');
+        countyEl.className = 'wiv-county';
+        countyEl.textContent = county.name;
+        frag.appendChild(countyEl);
 
         // Sort towns by name within each county
         county.towns.sort().forEach((town) => {
-          messageContent += `<div style="margin-left: 40px;">&bull; ${town}</div>`;
+          const townEl = document.createElement('div');
+          townEl.className = 'wiv-town';
+          townEl.textContent = '\u2022 ' + town;
+          frag.appendChild(townEl);
         });
       });
     });
-
-    messageContent += `<br><strong>ZIP CODES:</strong><br>`;
 
     // Sort zip codes by name and add them to the content
     const sortedZipCodes = zipData.features.sort((a, b) => {
@@ -2489,12 +2530,22 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       return zipA.localeCompare(zipB);
     });
 
+    const zipSection = document.createElement('div');
+    zipSection.className = 'wiv-zip-section';
+    const zipHeader = document.createElement('div');
+    zipHeader.className = 'wiv-zip-header';
+    zipHeader.textContent = 'Zip Codes';
+    zipSection.appendChild(zipHeader);
+
     sortedZipCodes.forEach((feature) => {
-      const zipName = feature.properties.BASENAME;
-      messageContent += `<div style="margin-left: 20px;">&bull; ${zipName}</div>`;
+      const zipEl = document.createElement('div');
+      zipEl.className = 'wiv-zip';
+      zipEl.textContent = '\u2022 ' + feature.properties.BASENAME;
+      zipSection.appendChild(zipEl);
     });
 
-    contentContainer.innerHTML = messageContent;
+    frag.appendChild(zipSection);
+    contentContainer.appendChild(frag);
   }
 
   /**********************************************************************************************************
@@ -2525,58 +2576,61 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       const allAttributes = features.map((feature) => Object.keys(feature.properties));
       const attributes = Array.from(new Set(allAttributes.flat()));
 
+      // Overlay backdrop
+      let overlay = document.createElement('div');
+      overlay.id = 'presentFeaturesAttributesOverlay';
+
+      // Modal container
       let attributeInput = document.createElement('div');
-      let title = document.createElement('label');
+      attributeInput.className = 'fa-modal';
+
+      // Header
+      let headerDiv = document.createElement('div');
+      headerDiv.className = 'fa-modal-header';
+      let titleEl = document.createElement('div');
+      titleEl.className = 'fa-modal-title';
+      titleEl.innerHTML = '<i class="fa fa-database" style="margin-right:5px;opacity:0.9;"></i>Feature Attributes';
+      let subtitleEl = document.createElement('div');
+      subtitleEl.className = 'fa-modal-subtitle';
+      subtitleEl.textContent = `Total Features: ${nbFeatures}`;
+      headerDiv.appendChild(titleEl);
+      headerDiv.appendChild(subtitleEl);
+      attributeInput.appendChild(headerDiv);
+
+      // Body
+      let modalBody = document.createElement('div');
+      modalBody.className = 'fa-modal-body';
+
+      // Scrollable features list
       let propsContainer = document.createElement('div');
-
-      // Determine the theme to set appropriate styles
-      const htmlElement = document.querySelector('html');
-      const theme = htmlElement.getAttribute('wz-theme') || 'light';
-
-      if (theme === 'dark') {
-        attributeInput.style.cssText =
-          'position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background: #333; border: 3px solid #666; border-radius: 5%; display: flex; flex-direction: column;';
-        title.style.cssText = 'margin-bottom: 5px; color: #ddd; align-self: center; font-size: 1.2em;';
-        propsContainer.style.cssText = 'overflow-y: auto; max-height: 300px; padding: 5px; border: 3px solid #444; border-radius: 10px; ';
-      } else {
-        attributeInput.style.cssText =
-          'position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1001; width: 80%; max-width: 600px; padding: 10px; background:rgb(228, 227, 227); border: 3px solid #aaa; border-radius: 5%; display: flex; flex-direction: column;';
-        title.style.cssText = 'margin-bottom: 5px; color: #333; align-self: center; font-size: 1.2em;';
-        propsContainer.style.cssText = 'overflow-y: auto; max-height: 300px; padding: 5px; border: 2px solid black; border-radius: 10px;';
-      }
-
-      title.innerHTML = `Feature Attributes<br>Total Features: ${nbFeatures}`;
-      attributeInput.appendChild(title);
-
-      let message = document.createElement('p');
-      message.style.cssText = 'margin-top: 10px; color: #777; text-align: center;';
-
-      attributeInput.appendChild(propsContainer);
+      propsContainer.className = 'fa-props-container';
 
       features.forEach((feature, index) => {
-        let featureHeader = document.createElement('label');
-        featureHeader.style.cssText = theme === 'dark' ? 'color: #ddd; font-size: 1.1em;' : 'color: #333; font-size: 1.1em;';
+        let featureHeader = document.createElement('span');
+        featureHeader.className = 'fa-feature-header';
         featureHeader.textContent = `Feature ${index + 1}`;
         propsContainer.appendChild(featureHeader);
 
         let propsList = document.createElement('ul');
+        propsList.className = 'fa-prop-list';
         Object.keys(feature.properties).forEach((key) => {
           let propItem = document.createElement('li');
-          propItem.style.cssText = 'list-style-type: none; padding: 2px; font-size: 0.9em;';
-          propItem.innerHTML = `<span style="color:rgb(53, 134, 187);">${key}</span>: ${feature.properties[key]}`;
+          propItem.className = 'fa-prop-item';
+          propItem.innerHTML = `<span class="fa-prop-key">${key}</span>: ${feature.properties[key]}`;
           propsList.appendChild(propItem);
         });
         propsContainer.appendChild(propsList);
       });
+      modalBody.appendChild(propsContainer);
 
+      // Label selector
       let inputLabel = document.createElement('label');
-      inputLabel.style.cssText = 'display: block; margin-top: 15px;';
+      inputLabel.className = 'fa-select-label';
       inputLabel.textContent = 'Select Attribute to use for Label:';
-
-      attributeInput.appendChild(inputLabel);
+      modalBody.appendChild(inputLabel);
 
       let selectBox = document.createElement('select');
-      selectBox.style.cssText = 'width: 90%; padding: 8px; margin-top: 5px; margin-left: 5%; margin-right: 5%; border-radius: 5px;';
+      selectBox.className = 'fa-select';
       attributes.forEach((attribute) => {
         let option = document.createElement('option');
         option.value = attribute;
@@ -2593,45 +2647,38 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       customLabelOption.value = 'custom';
       customLabelOption.textContent = 'Custom Label';
       selectBox.appendChild(customLabelOption);
+      modalBody.appendChild(selectBox);
 
-      attributeInput.appendChild(selectBox);
-
-      // Dynamically apply inline styles to ensure precedence
+      // Custom label textarea
       let customLabelInput = document.createElement('textarea');
-      customLabelInput.className = 'custom-label-input';
+      customLabelInput.className = 'fa-custom-label';
       customLabelInput.placeholder = `Enter your custom label using \${attributeName} for dynamic values.
       Feature 1
         BridgeNumber: 01995
         FacilityCarried: U.S. ROUTE 6
         FeatureCrossed: BIG RIVER
-      
+
       Example: (explicit new lines formatting)
       #:\${BridgeNumber}\\n\${FacilityCarried} over\\n\${FeatureCrossed}
-      
+
       Example: (multi-line formatting)
       #:\${BridgeNumber}
       \${FacilityCarried} over
       \${FeatureCrossed}
 
-      Expected Output: 
+      Expected Output:
         #:01995
         U.S. ROUTE 6 over
         BIG RIVER`;
-      customLabelInput.style.cssText =
-        'color: #5DADE2 !important; width: 90%; height: 300px; max-height: 300px; padding: 8px; font-size: 1rem; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; resize: vertical; display: none; margin-top: 5px; margin-left: 5%; margin-right: 5%;';
-      attributeInput.appendChild(customLabelInput);
+      modalBody.appendChild(customLabelInput);
 
       selectBox.addEventListener('change', () => {
         customLabelInput.style.display = selectBox.value === 'custom' ? 'block' : 'none';
       });
 
+      // Button row
       let buttonsContainer = document.createElement('div');
-      buttonsContainer.style.cssText = 'margin-top: 10px; display: flex; justify-content: flex-end; width: 90%; margin-left: 5%; margin-right: 5%;';
-
-      let overlay = document.createElement('div');
-      overlay.id = 'presentFeaturesAttributesOverlay';
-      overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;';
-      overlay.appendChild(attributeInput);
+      buttonsContainer.className = 'fa-btn-row';
 
       let importButton = createButton('Import', '#8BC34A', '#689F38', '#FFFFFF', 'button');
       importButton.onclick = () => {
@@ -2661,8 +2708,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
       buttonsContainer.appendChild(importButton);
       buttonsContainer.appendChild(cancelButton);
-      attributeInput.appendChild(buttonsContainer);
+      modalBody.appendChild(buttonsContainer);
 
+      attributeInput.appendChild(modalBody);
+      overlay.appendChild(attributeInput);
       document.body.appendChild(overlay);
     });
   }
@@ -2692,20 +2741,11 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   function addToGeoList(filename, color, fileext, labelattribute, externalProjection) {
     let liObj = document.createElement('li');
     liObj.id = filename.replace(/[^a-z0-9_-]/gi, '_');
-    liObj.style.cssText =
-      'position: relative; padding: 2px 2px; margin: 2px 0; background: transparent; border-radius: 3px; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; font-size: 0.95em;';
-
-    liObj.addEventListener('mouseover', function () {
-      liObj.style.background = '#eaeaea';
-    });
-
-    liObj.addEventListener('mouseout', function () {
-      liObj.style.background = 'transparent';
-    });
 
     let fileText = document.createElement('span');
-    fileText.style.cssText = `color: ${color}; flex-grow: 1; flex-shrink: 1; flex-basis: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 5px;`;
-    fileText.innerHTML = filename;
+    fileText.className = 'geofile-item-text';
+    fileText.style.color = color;
+    fileText.textContent = filename;
 
     const tooltipContent = `File Type: ${fileext}\nLabel: ${labelattribute}\nProjection: ${externalProjection}`;
     fileText.title = tooltipContent;
@@ -2713,8 +2753,9 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     liObj.appendChild(fileText);
 
     let removeButton = document.createElement('button');
-    removeButton.innerHTML = 'X';
-    removeButton.style.cssText = 'flex: none; background-color: #E57373; color: white; border: none; padding: 0; width: 16px; height: 16px; cursor: pointer; margin-left: 3px;';
+    removeButton.className = 'geofile-remove-btn';
+    removeButton.textContent = '\u00D7';
+    removeButton.title = `Remove ${filename}`;
     removeButton.addEventListener('click', () => removeGeometryLayer(filename));
     liObj.appendChild(removeButton);
 
@@ -2740,20 +2781,17 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       element.textContent = text;
     }
 
-    element.style.cssText = `padding: 8px 0; font-size: 1.1rem; border: 2px solid ${bgColor}; border-radius: 20px; cursor: pointer; background-color: ${bgColor}; 
-  color: ${textColor}; box-sizing: border-box; transition: background-color 0.3s, border-color 0.3s; font-weight: bold; text-align: center; width: 95%; margin: 3px;`;
+    element.style.cssText = `display: block; width: 100%; padding: 7px 12px; font-size: 12px; font-weight: 600; border: none; border-radius: 6px; cursor: pointer; background-color: ${bgColor}; color: ${textColor}; box-sizing: border-box; transition: background-color 0.2s; text-align: center; margin-bottom: 4px;`;
 
     // Apply !important to forcibly set color
     element.style.setProperty('color', textColor, 'important');
 
     element.addEventListener('mouseover', function () {
       element.style.backgroundColor = mouseoverColor;
-      element.style.borderColor = mouseoverColor;
     });
 
     element.addEventListener('mouseout', function () {
       element.style.backgroundColor = bgColor;
-      element.style.borderColor = bgColor;
     });
 
     return element; // Assuming you need to return the created element
