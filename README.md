@@ -16,7 +16,8 @@ WME GeoFile is a File Importer that allows you to import various geometry files 
 Once the script is installed and running, it will add a 'GEO' tab to the WME sidebar. You can use this tab to:
 
 - Import geometry files by selecting them from your computer.
-- Customize how these geometry files are displayed on the map (color, font size, fill opacity, line style, and label positions).
+- Customize how these geometry files are displayed on the map — stroke color, font size, fill opacity, line size/style, label color, label outline color & width, and label position.
+- **Edit any loaded layer's style** after import by clicking its name in the Loaded Files list to open the Edit Style Dialog, then clicking "Apply Changes" to redraw the layer instantly.
 - Clear all imported layers or selectively remove items.
 - Import Well-Known Text (WKT) directly into the editor via the GEO tab import functionality.
 - Draw state, county, county-sub & zip code boundaries based on the area in focus within WME (U.S. Only).
@@ -30,7 +31,10 @@ Built on the original code by Timbones:
    - Enhanced styling to form elements (buttons, sliders, labels, etc.) for a better user experience.
 
 2. **Customization Options**:
-   - Added options for customizing layer properties such as color, font size, fill opacity, line style, and label positions.
+   - Added options for customizing layer properties such as stroke color, font size, fill opacity, line size/style, and label position.
+   - **Label Color**: Choose a custom label text color or toggle "Match stroke" to keep it in sync with the stroke color.
+   - **Label Outline Color**: Choose a custom label outline color (default black) or toggle "Match stroke". Provides contrast so labels remain readable over any background.
+   - **Label Outline Width**: Set a fixed pixel width or toggle "Relative to Font Size" (default ON) to automatically compute the width as `font size ÷ 4`, scaling proportionally as font size changes.
 
 3. **State / County / County-Sub and ZIP Code Boundary Drawing**:
    - Available only if WME is started with the Top Level Country of the U.S. - Data source is US Census Bureau.
@@ -58,7 +62,13 @@ Built on the original code by Timbones:
      - **EPSG**: 3035, 3414, 4214, 4258, 4267, 4283, 4326, 25832, and series 26901->26923, 27700, 32601->32660, 32701->32760.
    - Automatically handles all transformations from SHP Zip files that contain a `.prj` file, ensuring accurate mapping and data representation on the WME platform.
 
-8. **Enhanced Label Management**:
+8. **Edit Style Dialog**:
+   - Click any layer name in the **Loaded Files** list to open a floating, draggable **Edit Style** popup pre-populated with that layer's current stored values.
+   - All style properties can be adjusted: stroke color, font size, label color, outline color, outline width, fill opacity, line size/style/opacity, and label position.
+   - Click **Apply Changes** to redraw the layer on the map instantly — no re-import required. The updated style is persisted to IndexedDB and will reload correctly on the next WME session.
+   - Attempting to import a new file while the dialog is open shows a warning; close or cancel the dialog first.
+
+9. **Enhanced Label Management**:
    - Improved label handling, including finer control over label positioning and styling.
    - Custom Labels: You can define custom labels using placeholders for dynamic values.
 

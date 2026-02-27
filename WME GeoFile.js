@@ -2,7 +2,7 @@
 // @name                WME GeoFile
 // @namespace           https://github.com/JS55CT
 // @description         WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2026.02.27.1
+// @version             2026.02.27.2
 // @author              JS55CT
 // @match               https://www.waze.com/*/editor*
 // @match               https://www.waze.com/editor*
@@ -92,6 +92,34 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   let editPanel    = null;   // cached reference to the #WMEGeoEditDialog DOM element
   const layerStyleStates = new Map(); // layerName → mutable style state object for live SDK redraws
 
+  /*******************************************************************************
+   * layerStoreObj
+   *
+   * Description:
+   * Constructor for the layer data-transfer object. Captures all metadata and
+   * style properties needed to render a geographic layer on the map and persist
+   * it to IndexedDB. Instances flow through the full pipeline:
+   * parseFile → createLayerWithLabelSDK → storeLayer, and are rehydrated on
+   * reload via loadLayer → parseFile.
+   *
+   * Parameters:
+   * @param {Object}       fileContent                - Parsed GeoJSON FeatureCollection.
+   * @param {string}       color                      - Hex stroke/fill color (e.g. '#FF0000').
+   * @param {string}       fileext                    - Normalised extension used for rendering (e.g. 'GEOJSON').
+   * @param {string}       filename                   - Layer display name and IndexedDB primary key.
+   * @param {number}       fillOpacity                - Polygon fill opacity 0–1.
+   * @param {number}       fontsize                   - Label font size and point radius (px).
+   * @param {number}       lineopacity                - Line stroke opacity 0–1.
+   * @param {number}       linesize                   - Line stroke width (px).
+   * @param {string}       linestyle                  - Dash pattern: 'solid', 'dash', or 'dot'.
+   * @param {string}       labelpos                   - Two-character alignment code, e.g. 'cm', 'lt'.
+   * @param {string}       labelattribute             - Label template string, e.g. '${NAME}'.
+   * @param {string}       orgFileext                 - Original file extension before conversion (e.g. 'SHP').
+   * @param {string|null}  fontColor                  - Label text color hex, or null to match stroke color.
+   * @param {string|null}  labelOutlineColor          - Label outline color hex, or null to match stroke color.
+   * @param {number}       labelOutlineWidth          - Outline width (px) when labelOutlineWidthRelative is false.
+   * @param {boolean}      labelOutlineWidthRelative  - true (default) = outline width = fontsize / 4.
+   *******************************************************************************/
   function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelattribute, orgFileext, fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative) {
     this.fileContent = fileContent;
     this.color = color;
@@ -1427,6 +1455,22 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     }
   }
 
+  /*******************************************************************************
+   * initDatabase
+   *
+   * Description:
+   * Opens (or creates) the 'GeometryLayersDB' IndexedDB database at schema
+   * version 1 and initialises the 'layers' object store with 'filename' as its
+   * key path. On success, assigns the opened IDBDatabase reference to the
+   * module-level `db` variable so all other IndexedDB functions can use it.
+   *
+   * If the database does not yet exist (first run) or is being upgraded, the
+   * onupgradeneeded callback creates the object store automatically.
+   *
+   * Returns:
+   * @returns {Promise<void>} Resolves when the database is open and ready;
+   *                          rejects with an Error if IndexedDB fails to open.
+   *******************************************************************************/
   function initDatabase() {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open('GeometryLayersDB', 1);
@@ -1716,7 +1760,12 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
    * - Provides informative feedback through the callback, capturing success details or error context.
    ****************************************************************************************/
   function fetchProjString(identifier, callback) {
-    // Function to extract the EPSG code from various identifier formats
+    // Extracts the numeric EPSG code from various CRS identifier formats
+    // (e.g. 'EPSG:4326', 'urn:ogc:def:crs:EPSG::4326', 'CRS:84').
+    // Tests a ranked list of regex patterns and returns the canonical 'EPSG:NNNN'
+    // string on the first match, or null if no supported format is recognised.
+    // @param   {string}      identifier - The CRS identifier string to parse.
+    // @returns {string|null}            - Canonical EPSG string or null.
     function extractEPSGCode(identifier) {
       const identifierPatterns = [
         /^EPSG:(\d+)$/,
@@ -1877,7 +1926,14 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     }
   }
 
-  // Clears the current contents of the textarea.
+  /*******************************************************************************
+   * clear_WKT_input
+   *
+   * Description:
+   * Resets the WKT import form by clearing both the WKT textarea (#input_WKT)
+   * and the layer name field (#input_WKT_name), returning the form to its
+   * blank initial state ready for new input.
+   *******************************************************************************/
   function clear_WKT_input() {
     document.getElementById('input_WKT').value = '';
     document.getElementById('input_WKT_name').value = '';
@@ -2207,6 +2263,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       reader.readAsText(file);
     }
 
+    // Factory that returns an error handler for a specific file-format parsing context.
+    // The returned handler logs the error to the console and shows a WazeWrap alert.
+    // @param   {string}   context - Human-readable format label shown in the log (e.g. 'SHP', 'KML').
+    // @returns {Function}         - Error handler that accepts an Error or event object.
     function handleError(context) {
       return (error) => {
         console.error(`${scriptName}: Error parsing ${context}:`, error);
@@ -2475,7 +2535,11 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
    * - Applies proj4 transformation to single points.
    ****************************************************************************************/
   function convertCoordinates(sourceCRS, targetCRS, coordinates) {
-    // Function to strip Z coordinates
+    // Recursively strips Z (and M) dimensions from a coordinate or nested coordinate
+    // array, returning only [X, Y] pairs. Required because the WME SDK map layer
+    // only accepts 2D GeoJSON coordinates.
+    // @param   {Array} coords - A coordinate value [x,y,z?] or nested array thereof.
+    // @returns {Array}        - The same structure with only X and Y retained.
     function stripZ(coords) {
       if (Array.isArray(coords[0])) {
         return coords.map(stripZ);
@@ -2581,6 +2645,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       processFileContent();
     }
 
+    // Inner step of the parse pipeline. Reprojects the raw GeoJSON to EPSG:4326,
+    // validates that at least one feature is present, then either calls
+    // createLayerWithLabelSDK() directly (when fileObj.labelattribute is already set)
+    // or opens the attribute-selection dialog (presentFeaturesAttributesSDK) first.
     function processFileContent() {
       try {
         const targetCRS = 'EPSG:4326'; // New WME SDK uses EPSG:4326
@@ -2907,8 +2975,28 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     'labelpos', 'fontColor', 'labelOutlineColor', 'labelOutlineWidth', 'labelOutlineWidthRelative',
   ];
 
-  // Updates style fields in IndexedDB without touching the compressed GeoJSON content.
-  // Reads the existing record, attaches a small uncompressed styleOverride, and writes it back.
+  /*******************************************************************************
+   * updateLayerInIndexedDB
+   *
+   * Description:
+   * Persists style-field changes for an existing layer without recompressing
+   * its GeoJSON content. Reads the existing IndexedDB record, attaches a small
+   * uncompressed 'styleOverride' object containing only the fields listed in
+   * STYLE_OVERRIDE_FIELDS, and writes the record back with store.put().
+   *
+   * This is significantly faster than a full re-compress because the GeoJSON
+   * fileContent blob (potentially several MB) is left completely untouched.
+   * loadLayer() applies the override via Object.assign() after decompressing,
+   * ensuring the updated styles are reflected on the next WME session load.
+   *
+   * Parameters:
+   * @param {Object} fileObj - layerStoreObj with updated style values to persist.
+   *                           Must include a 'filename' matching an existing record.
+   *
+   * Returns:
+   * @returns {Promise<void>} Resolves when the record is updated; rejects if the
+   *                          layer is not found or the write transaction fails.
+   *******************************************************************************/
   async function updateLayerInIndexedDB(fileObj) {
     if (!db) return Promise.reject(new Error('Database not initialized'));
 
@@ -2951,6 +3039,18 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     });
   }
 
+  /*******************************************************************************
+   * toggleLoadingMessage
+   *
+   * Description:
+   * Shows or hides the 'Loading new geometries' toast overlay (#WMEGeoLoadingMessage).
+   * The toast is appended to document.body with a blue left border and a spinning
+   * fa-spinner icon. Only one instance is created at a time; calling show=true
+   * when the toast is already visible is a no-op.
+   *
+   * Parameters:
+   * @param {boolean} show - true to display the toast; false to remove it.
+   *******************************************************************************/
   function toggleLoadingMessage(show) {
     const existingMessage = document.getElementById('WMEGeoLoadingMessage');
 
@@ -2977,6 +3077,18 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     }
   }
 
+  /*******************************************************************************
+   * toggleParsingMessage
+   *
+   * Description:
+   * Shows or hides the 'Parsing and converting input files' toast overlay
+   * (#WMEGeoParsingMessage). Uses a green left border and a spinning fa-cog icon.
+   * Only one instance is created at a time; calling show=true when already
+   * visible is a no-op.
+   *
+   * Parameters:
+   * @param {boolean} show - true to display the toast; false to remove it.
+   *******************************************************************************/
   function toggleParsingMessage(show) {
     const existingMessage = document.getElementById('WMEGeoParsingMessage');
 
@@ -3003,6 +3115,19 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     }
   }
 
+  /*******************************************************************************
+   * toggleRedrawMessage
+   *
+   * Description:
+   * Shows or hides the 'Applying style changes' toast overlay (#WMEGeoRedrawMessage).
+   * Uses an orange left border and a spinning fa-refresh icon to distinguish it
+   * from the loading (blue) and parsing (green) toasts. Displayed by redrawLayer()
+   * for the duration of the SDK redraw and IndexedDB write. Only one instance is
+   * created at a time; calling show=true when already visible is a no-op.
+   *
+   * Parameters:
+   * @param {boolean} show - true to display the toast; false to remove it.
+   *******************************************************************************/
   function toggleRedrawMessage(show) {
     const existingMessage = document.getElementById('WMEGeoRedrawMessage');
 
@@ -3467,6 +3592,27 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
   // ── Layer Edit Dialog functions ──────────────────────────────────────────
 
+  /*******************************************************************************
+   * populateEditPanel
+   *
+   * Description:
+   * Reverse-maps all style properties from a layerStoreObj into the corresponding
+   * controls inside the #WMEGeoEditDialog. Called every time a layer is selected
+   * for editing so the dialog always reflects the layer's current persisted state.
+   *
+   * Toggle-controlled field logic:
+   * - fontColor == null          → 'Match stroke' ON, picker disabled, value = stroke color.
+   * - labelOutlineColor == null  → 'Match stroke' ON, picker disabled, value = stroke color.
+   * - labelOutlineWidthRelative !== false → 'Relative' ON, input disabled,
+   *                                        value = fontsize / 4.
+   *
+   * Synthetic 'input' events are dispatched on color and slider elements so that
+   * linked UI components (opacity label text, slider background gradient, dependent
+   * color pickers) update immediately without needing separate calls.
+   *
+   * Parameters:
+   * @param {Object} fileObj - layerStoreObj containing the layer's current style values.
+   *******************************************************************************/
   function populateEditPanel(fileObj) {
     document.getElementById('edit_color').value = fileObj.color || '#00bfff';
     document.getElementById('edit_color').dispatchEvent(new Event('input')); // sync sliders + color pickers
@@ -3535,6 +3681,20 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     }
   }
 
+  /*******************************************************************************
+   * selectLayerForEdit
+   *
+   * Description:
+   * Activates edit mode for a layer. Removes the 'geofile-editing' CSS highlight
+   * from any previously selected list item, sets the module-level editingLayer
+   * to the supplied fileObj, highlights the corresponding <li> element in the
+   * Loaded Files list, updates the dialog title, calls populateEditPanel() to
+   * fill all controls with the layer's current style values, then makes the
+   * #WMEGeoEditDialog visible.
+   *
+   * Parameters:
+   * @param {Object} fileObj - layerStoreObj loaded from IndexedDB for the clicked layer.
+   *******************************************************************************/
   function selectLayerForEdit(fileObj) {
     // De-highlight previous selection
     if (editingLayer) {
@@ -3555,6 +3715,17 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     editPanel.style.display = 'block';
   }
 
+  /*******************************************************************************
+   * cancelLayerEdit
+   *
+   * Description:
+   * Closes the Edit Style Dialog without applying any changes. Removes the
+   * 'geofile-editing' highlight from the currently selected list item, clears
+   * the module-level editingLayer reference to null, and hides the dialog.
+   *
+   * Also called automatically by removeGeometryLayer() when the layer being
+   * edited is deleted, and by the dialog's × button.
+   *******************************************************************************/
   function cancelLayerEdit() {
     if (editingLayer) {
       const li = document.getElementById(editingLayer.filename.replace(/[^a-z0-9_-]/gi, '_'));
@@ -3564,6 +3735,27 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     editPanel.style.display = 'none';
   }
 
+  /*******************************************************************************
+   * applyLayerEdits
+   *
+   * Description:
+   * Reads all current values from the Edit Style Dialog controls, builds an
+   * updated copy of editingLayer, and triggers a live layer redraw.
+   *
+   * Workflow:
+   * 1. Collects all style values from the edit_* form controls.
+   * 2. Resolves toggle-driven sentinel values: label-color sync ON → null,
+   *    outline-color sync ON → null (both signal "match stroke color").
+   * 3. Shallow-clones editingLayer and applies all updated values.
+   * 4. Calls redrawLayer(), which updates the mutable style state, triggers
+   *    wmeSDK.Map.redrawLayer(), and persists the change to IndexedDB.
+   * 5. Updates the editingLayer reference and the list item's text color chip.
+   *
+   * Guard: returns immediately if editingLayer is null (no layer selected).
+   *
+   * Returns:
+   * @returns {Promise<void>} Resolves after redrawLayer() completes.
+   *******************************************************************************/
   async function applyLayerEdits() {
     if (!editingLayer) return;
 
@@ -3610,6 +3802,34 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     }
   }
 
+  /*******************************************************************************
+   * redrawLayer
+   *
+   * Description:
+   * Applies updated style values to a loaded layer without removing or re-adding
+   * any features. Shows the orange 'Applying style changes' toast for the full
+   * duration of the operation via a try/finally guard.
+   *
+   * Fast path (normal — layer has a registered mutableStyle in layerStyleStates):
+   * 1. Resolves sentinel values (null → stroke color, relative width → fontsize/4)
+   *    and writes them directly into the mutableStyle object that styleContext
+   *    getters close over.
+   * 2. Calls wmeSDK.Map.redrawLayer(): the SDK re-invokes all styleContext getter
+   *    functions, applying the new values with no feature re-processing and no
+   *    layer flicker.
+   * 3. Calls updateLayerInIndexedDB() to persist a lightweight styleOverride
+   *    record (no LZString recompression of the GeoJSON content).
+   *
+   * Fallback path (layer not in layerStyleStates — should not occur in normal use):
+   * Removes the SDK layer, clears its toggler and <li>, deletes the IndexedDB
+   * record, and re-runs the full parseFile() pipeline.
+   *
+   * Parameters:
+   * @param {Object} fileObj - layerStoreObj containing the updated style values.
+   *
+   * Returns:
+   * @returns {Promise<void>} Resolves after the SDK redraw and DB write complete.
+   *******************************************************************************/
   async function redrawLayer(fileObj) {
     const layerName = fileObj.filename.replace(/[^a-z0-9_-]/gi, '_');
     const styleState = layerStyleStates.get(layerName);
@@ -3665,8 +3885,27 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────
-
+  /*******************************************************************************
+   * createButton
+   *
+   * Description:
+   * Factory function that creates and returns a styled, interactive DOM element.
+   * Supports three element types: 'button' (<button>), 'input' (<input type="button">),
+   * and 'label' (<label>). All variants share a full-width block layout with
+   * configurable background, hover, and text colors plus a 0.2s color transition.
+   *
+   * Parameters:
+   * @param {string} text             - Display text (textContent or input value).
+   * @param {string} bgColor          - Default background CSS color.
+   * @param {string} mouseoverColor   - Background color applied on mouseover.
+   * @param {string} textColor        - Text color (applied with !important to
+   *                                    override any WME global styles).
+   * @param {string} [type='button']  - Element type: 'button', 'input', or 'label'.
+   * @param {string} [labelFor='']    - When type is 'label', sets the htmlFor attribute.
+   *
+   * Returns:
+   * @returns {HTMLElement} The configured element, ready to append to the UI.
+   *******************************************************************************/
   function createButton(text, bgColor, mouseoverColor, textColor, type = 'button', labelFor = '') {
     let element;
 
@@ -3765,7 +4004,21 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     }
   }
 
-  // Function to remove a layer from IndexedDB
+  /*******************************************************************************
+   * removeLayerFromIndexedDB
+   *
+   * Description:
+   * Permanently deletes a layer record from the 'layers' IndexedDB object store
+   * using the filename as its primary key. Used by removeGeometryLayer() for
+   * full deletions and by the fallback path of redrawLayer() before re-parsing.
+   *
+   * Parameters:
+   * @param {string} filename - The layer filename (primary key) to delete.
+   *
+   * Returns:
+   * @returns {Promise<void>} Resolves when the record is deleted; rejects if the
+   *                          database is uninitialised or the transaction fails.
+   *******************************************************************************/
   async function removeLayerFromIndexedDB(filename) {
     if (!db) {
       // Check if the database is initialized
@@ -3815,6 +4068,12 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     const formats = {};
     let formathelp = '';
 
+    // Attempts to instantiate a file-format parser and register it in the formats map.
+    // First tries `new formatUtility()`. If the constructor throws (singleton pattern),
+    // falls back to using the utility directly. Appends the format name to the
+    // formathelp string on success, or logs a warning if the utility is unavailable.
+    // @param {string}            formatName    - Display name (e.g. 'KML', 'GPX').
+    // @param {Function|Object|false} formatUtility - Parser constructor/instance, or false if not loaded.
     function tryCreateFormat(formatName, formatUtility) {
       try {
         if (typeof formatUtility === 'function') {
@@ -3974,6 +4233,20 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     if (debug) console.log(`${scriptName}: Layer Toggler created for ${layerName}`);
   }
 
+  /*******************************************************************************
+   * layerTogglerEventHandler
+   *
+   * Description:
+   * Factory that returns a checkbox change handler for an individual layer toggler.
+   * When the checkbox state changes, the handler calls wmeSDK.Map.setLayerVisibility()
+   * to show or hide the corresponding SDK layer.
+   *
+   * Parameters:
+   * @param {string} layerId - The SDK layer name whose visibility is controlled.
+   *
+   * Returns:
+   * @returns {Function} A checkbox 'change' event handler.
+   *******************************************************************************/
   function layerTogglerEventHandler(layerId) {
     return function () {
       const isVisible = this.checked;
@@ -3989,6 +4262,23 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     };
   }
 
+  /*******************************************************************************
+   * layerTogglerGroupEventHandler
+   *
+   * Description:
+   * Factory that returns a checkbox change handler for an individual layer
+   * checkbox within a group. Visibility is set to true only when both the layer
+   * checkbox AND the parent group checkbox are checked. Also manages the group
+   * checkbox's disabled state so it cannot be toggled when all child layers
+   * are individually unchecked.
+   *
+   * Parameters:
+   * @param {HTMLInputElement} groupCheckbox - The parent group's checkbox element.
+   * @param {string}           layerId       - The SDK layer name to control.
+   *
+   * Returns:
+   * @returns {Function} A checkbox 'change' event handler.
+   *******************************************************************************/
   function layerTogglerGroupEventHandler(groupCheckbox, layerId) {
     return function () {
       const shouldBeVisible = this.checked && groupCheckbox.checked;
@@ -4008,6 +4298,21 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     };
   }
 
+  /*******************************************************************************
+   * layerTogglerGroupMinimizerEventHandler
+   *
+   * Description:
+   * Factory that returns a click handler for the layer-switcher group collapse
+   * button. Each click toggles the 'collapse-layer-switcher-group' class on the
+   * child <ul> (showing/hiding the layer list) and rotates the caret icon 180°
+   * via the 'upside-down' class to reflect the current expanded/collapsed state.
+   *
+   * Parameters:
+   * @param {HTMLElement} iCaretDown - The caret <i> icon element in the group header.
+   *
+   * Returns:
+   * @returns {Function} A click event handler.
+   *******************************************************************************/
   function layerTogglerGroupMinimizerEventHandler(iCaretDown) {
     return function () {
       const ulCollapsible = iCaretDown.closest('li').querySelector('ul');
