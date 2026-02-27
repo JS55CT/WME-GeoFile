@@ -2,7 +2,7 @@
 // @name                WME GeoFile
 // @namespace           https://github.com/JS55CT
 // @description         WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2026.02.27.00
+// @version             2026.02.27.1
 // @author              JS55CT
 // @match               https://www.waze.com/*/editor*
 // @match               https://www.waze.com/editor*
@@ -88,8 +88,11 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   let db;
   let groupToggler;
   let projectionMap = {};
+  let editingLayer = null;   // layerStoreObj currently in the edit dialog (null = not editing)
+  let editPanel    = null;   // cached reference to the #WMEGeoEditDialog DOM element
+  const layerStyleStates = new Map(); // layerName → mutable style state object for live SDK redraws
 
-  function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelattribute, orgFileext) {
+  function layerStoreObj(fileContent, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelattribute, orgFileext, fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative) {
     this.fileContent = fileContent;
     this.color = color;
     this.fileext = fileext;
@@ -102,6 +105,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     this.labelpos = labelpos;
     this.labelattribute = labelattribute;
     this.orgFileext = orgFileext;
+    this.fontColor = fontColor;                               // null = use stroke color; hex string = custom
+    this.labelOutlineColor = labelOutlineColor;               // e.g. '#000000'
+    this.labelOutlineWidth = labelOutlineWidth;               // number, e.g. 3
+    this.labelOutlineWidthRelative = labelOutlineWidthRelative; // true = fontsize/4; false = use labelOutlineWidth
   }
 
   let wmeSDK;
@@ -223,8 +230,12 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       request.onsuccess = function () {
         const result = request.result;
         if (result) {
-          // Decompress the entire stored object
+          // Decompress the base file object
           const decompressedFileObj = JSON.parse(LZString.decompress(result.compressedData));
+          // Apply any style overrides saved after the initial import (no re-compression needed)
+          if (result.styleOverride) {
+            Object.assign(decompressedFileObj, result.styleOverride);
+          }
           resolve(decompressedFileObj);
         } else {
           resolve(null);
@@ -294,6 +305,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 .wme-geofile-panel .geofile-label { font-size: 11px; font-weight: 500; color: var(--content_p1); white-space: nowrap; }
 .wme-geofile-panel .geofile-stroke-sub { font-size: 11px; font-weight: 700; color: var(--content_p1); margin: 6px 0 4px 0; }
 .wme-geofile-panel input[type="color"] { width: 40px; height: 22px; padding: 0 2px; border: 1px solid var(--hairline); border-radius: 4px; cursor: pointer; }
+.wme-geofile-panel input[type="color"]:disabled { opacity: 0.35; cursor: not-allowed; }
 .wme-geofile-panel input[type="number"] { padding: 3px 6px; border: 1px solid var(--hairline); border-radius: 4px; font-size: 12px; background: var(--surface_default); color: var(--content_default); }
 .wme-geofile-panel input[type="number"]:focus { outline: none; border-color: var(--primary); }
 .wme-geofile-panel .geofile-slider-label { font-size: 11px; color: var(--content_p1); margin-bottom: 3px; display: block; }
@@ -317,12 +329,12 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 .wme-geofile-panel .geofile-btn-row .geofile-btn { flex: 1; margin: 0; }
 .wme-geofile-panel .geofile-debug-row { display: flex; align-items: center; gap: 8px; }
 .wme-geofile-panel .geofile-debug-label { font-size: 11px; color: var(--content_p2); }
-.wme-geofile-panel .geofile-toggle-wrap { position: relative; display: inline-block; width: 34px; height: 18px; cursor: pointer; flex-shrink: 0; }
+.wme-geofile-panel .geofile-toggle-wrap { position: relative; display: inline-block; width: 28px; height: 14px; cursor: pointer; flex-shrink: 0; }
 .wme-geofile-panel .geofile-toggle-wrap input { opacity: 0; width: 0; height: 0; position: absolute; }
-.wme-geofile-panel .geofile-toggle-slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--hairline); border-radius: 9px; transition: background 0.3s; }
-.wme-geofile-panel .geofile-toggle-slider::before { position: absolute; content: ''; height: 12px; width: 12px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: transform 0.3s; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+.wme-geofile-panel .geofile-toggle-slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--hairline); border-radius: 7px; transition: background 0.3s; }
+.wme-geofile-panel .geofile-toggle-slider::before { position: absolute; content: ''; height: 10px; width: 10px; left: 2px; bottom: 2px; background: white; border-radius: 50%; transition: transform 0.3s; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
 .wme-geofile-panel .geofile-toggle-wrap input:checked + .geofile-toggle-slider { background: #4CAF50; }
-.wme-geofile-panel .geofile-toggle-wrap input:checked + .geofile-toggle-slider::before { transform: translateX(16px); }
+.wme-geofile-panel .geofile-toggle-wrap input:checked + .geofile-toggle-slider::before { transform: translateX(14px); }
 /* === WME GeoFile - Whats in View Popup === */
 #WMEGeowhatsInViewMessage { font-family: inherit; background: var(--surface_default); border: 1px solid var(--hairline); border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.15); overflow: hidden; }
 #WMEGeowhatsInViewMessage .wiv-header { background: linear-gradient(135deg, #0066cc, #0052a3); padding: 8px 10px; border-radius: 10px 10px 0 0; display: flex; justify-content: space-between; align-items: center; height: 36px; cursor: move; box-sizing: border-box; user-select: none; flex-shrink: 0; }
@@ -365,12 +377,23 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 #presentFeaturesAttributesOverlay .fa-btn-row { display: flex; gap: 8px; flex-shrink: 0; }
 #presentFeaturesAttributesOverlay .fa-btn-row button { flex: 1; width: auto !important; margin-bottom: 0 !important; }
 /* === WME GeoFile - Toast Messages === */
-#WMEGeoLoadingMessage, #WMEGeoParsingMessage { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 12px 18px; background: var(--surface_default); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.1); font-family: inherit; font-size: 12px; font-weight: 500; z-index: 2000; color: var(--content_default); display: flex; align-items: center; gap: 10px; min-width: 260px; }
+#WMEGeoLoadingMessage, #WMEGeoParsingMessage, #WMEGeoRedrawMessage { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 12px 18px; background: var(--surface_default); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.1); font-family: inherit; font-size: 12px; font-weight: 500; z-index: 2000; color: var(--content_default); display: flex; align-items: center; gap: 10px; min-width: 260px; }
 #WMEGeoLoadingMessage { border-left: 4px solid var(--primary); }
 #WMEGeoParsingMessage { border-left: 4px solid #4CAF50; }
+#WMEGeoRedrawMessage  { border-left: 4px solid #FF9800; }
 #WMEGeoLoadingMessage .geo-toast-icon { color: var(--primary); font-size: 15px; flex-shrink: 0; }
 #WMEGeoParsingMessage .geo-toast-icon { color: #4CAF50; font-size: 15px; flex-shrink: 0; }
-#WMEGeoLoadingMessage .geo-toast-text, #WMEGeoParsingMessage .geo-toast-text { color: var(--content_p1); line-height: 1.4; }
+#WMEGeoRedrawMessage  .geo-toast-icon { color: #FF9800; font-size: 15px; flex-shrink: 0; }
+#WMEGeoLoadingMessage .geo-toast-text, #WMEGeoParsingMessage .geo-toast-text, #WMEGeoRedrawMessage .geo-toast-text { color: var(--content_p1); line-height: 1.4; }
+/* === WME GeoFile - Layer Edit Dialog === */
+.wme-geofile-panel .geofile-list .geofile-item-text { cursor: pointer; }
+.wme-geofile-panel .geofile-list li.geofile-editing { background: var(--surface_default); border-left: 3px solid var(--primary); padding-left: 5px; }
+#WMEGeoEditDialog { font-family: inherit; background: var(--surface_default); border: 1px solid var(--hairline); border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.15); overflow: hidden; display: none; }
+#WMEGeoEditDialog .edit-dialog-header { background: linear-gradient(135deg, #0066cc, #0052a3); padding: 8px 10px; border-radius: 10px 10px 0 0; display: flex; justify-content: space-between; align-items: center; height: 36px; cursor: move; box-sizing: border-box; user-select: none; flex-shrink: 0; }
+#WMEGeoEditDialog .edit-dialog-title { color: white; font-size: 12px; font-weight: 700; letter-spacing: 0.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+#WMEGeoEditDialog .edit-dialog-close { color: white; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.8; background: none; border: none; padding: 2px 5px; border-radius: 4px; transition: opacity 0.2s, background 0.2s; flex-shrink: 0; }
+#WMEGeoEditDialog .edit-dialog-close:hover { opacity: 1; background: rgba(255,255,255,0.18); }
+#WMEGeoEditDialog .edit-dialog-body { padding: 10px; overflow-y: auto; max-height: 70vh; }
         `;
         document.head.appendChild(style);
       }
@@ -406,6 +429,388 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       geolist = document.createElement('ul');
       geolist.className = 'geofile-list';
       geobox.appendChild(geolist);
+
+      // === Layer Edit Dialog (floating popup, same pattern as WIV popup) ===
+      editPanel = document.createElement('div');
+      editPanel.id = 'WMEGeoEditDialog';
+      editPanel.style.cssText = 'position: absolute; z-index: 1000; width: 340px; left: 50%; top: 40%; transform: translate(-50%, -50%);';
+
+      // Dialog header (draggable)
+      const editDialogHeader = document.createElement('div');
+      editDialogHeader.className = 'edit-dialog-header';
+
+      const editDialogTitle = document.createElement('span');
+      editDialogTitle.className = 'edit-dialog-title';
+      editDialogTitle.id = 'edit_panel_title';
+      editDialogTitle.textContent = '\u270F Edit Layer: \u2014';
+      editDialogHeader.appendChild(editDialogTitle);
+
+      const editDialogClose = document.createElement('button');
+      editDialogClose.className = 'edit-dialog-close';
+      editDialogClose.textContent = '\u00D7';
+      editDialogClose.title = 'Cancel editing';
+      editDialogClose.addEventListener('click', cancelLayerEdit);
+      editDialogHeader.appendChild(editDialogClose);
+
+      // Draggable header — same pattern as WIV popup
+      editDialogHeader.onmousedown = (event) => {
+        if (event.target === editDialogClose) return;
+        event.preventDefault();
+        const offsetX = event.clientX - editPanel.offsetLeft;
+        const offsetY = event.clientY - editPanel.offsetTop;
+        document.onmousemove = (ev) => {
+          editPanel.style.left = `${ev.clientX - offsetX}px`;
+          editPanel.style.top = `${ev.clientY - offsetY}px`;
+          editPanel.style.transform = 'none';
+        };
+        document.onmouseup = () => {
+          document.onmousemove = null;
+          document.onmouseup = null;
+        };
+      };
+
+      editPanel.appendChild(editDialogHeader);
+
+      // Dialog body
+      const editDialogBody = document.createElement('div');
+      editDialogBody.className = 'edit-dialog-body wme-geofile-panel';
+
+      // --- Color + Font Size row ---
+      const edit_colorFontSizeRow = document.createElement('div');
+      edit_colorFontSizeRow.className = 'geofile-row';
+
+      const edit_color_label = document.createElement('label');
+      edit_color_label.setAttribute('for', 'edit_color');
+      edit_color_label.className = 'geofile-label';
+      edit_color_label.textContent = 'Stroke Color:';
+      const edit_color = document.createElement('input');
+      edit_color.type = 'color';
+      edit_color.id = 'edit_color';
+      edit_color.name = 'edit_color';
+      edit_color.value = '#00bfff';
+
+      const edit_font_size_label = document.createElement('label');
+      edit_font_size_label.setAttribute('for', 'edit_font_size');
+      edit_font_size_label.className = 'geofile-label';
+      edit_font_size_label.style.marginLeft = 'auto';
+      edit_font_size_label.textContent = 'Font Size:';
+      const edit_font_size = document.createElement('input');
+      edit_font_size.type = 'number';
+      edit_font_size.id = 'edit_font_size';
+      edit_font_size.min = '0';
+      edit_font_size.max = '20';
+      edit_font_size.step = '1';
+      edit_font_size.value = '12';
+      edit_font_size.style.width = '50px';
+
+      edit_colorFontSizeRow.appendChild(edit_color_label);
+      edit_colorFontSizeRow.appendChild(edit_color);
+      edit_colorFontSizeRow.appendChild(edit_font_size_label);
+      edit_colorFontSizeRow.appendChild(edit_font_size);
+      editDialogBody.appendChild(edit_colorFontSizeRow);
+
+      // --- Label Color row ---
+      const edit_labelColorRow = document.createElement('div');
+      edit_labelColorRow.className = 'geofile-row';
+
+      const edit_label_color_label = document.createElement('label');
+      edit_label_color_label.setAttribute('for', 'edit_label_color');
+      edit_label_color_label.className = 'geofile-label';
+      edit_label_color_label.textContent = 'Label Color:';
+
+      const edit_label_color_input = document.createElement('input');
+      edit_label_color_input.type = 'color';
+      edit_label_color_input.id = 'edit_label_color';
+      edit_label_color_input.value = '#00bfff';
+      edit_label_color_input.disabled = true;
+
+      const edit_label_color_toggle_wrap = document.createElement('label');
+      edit_label_color_toggle_wrap.className = 'geofile-toggle-wrap';
+      edit_label_color_toggle_wrap.title = 'Use stroke color for label text';
+      const edit_label_color_sync = document.createElement('input');
+      edit_label_color_sync.type = 'checkbox';
+      edit_label_color_sync.id = 'edit_label_color_sync';
+      edit_label_color_sync.checked = true;
+      const edit_label_color_slider = document.createElement('span');
+      edit_label_color_slider.className = 'geofile-toggle-slider';
+      edit_label_color_toggle_wrap.appendChild(edit_label_color_sync);
+      edit_label_color_toggle_wrap.appendChild(edit_label_color_slider);
+      const edit_label_color_text = document.createElement('span');
+      edit_label_color_text.className = 'geofile-debug-label';
+      edit_label_color_text.textContent = 'Match stroke';
+
+      edit_label_color_sync.addEventListener('change', () => {
+        edit_label_color_input.disabled = edit_label_color_sync.checked;
+        if (edit_label_color_sync.checked) edit_label_color_input.value = edit_color.value;
+      });
+
+      edit_labelColorRow.appendChild(edit_label_color_label);
+      edit_labelColorRow.appendChild(edit_label_color_input);
+      edit_labelColorRow.appendChild(edit_label_color_toggle_wrap);
+      edit_labelColorRow.appendChild(edit_label_color_text);
+      editDialogBody.appendChild(edit_labelColorRow);
+
+      // --- Outline Color row ---
+      const edit_labelOutlineColorRow = document.createElement('div');
+      edit_labelOutlineColorRow.className = 'geofile-row';
+
+      const edit_label_outline_color_label = document.createElement('label');
+      edit_label_outline_color_label.setAttribute('for', 'edit_label_outline_color');
+      edit_label_outline_color_label.className = 'geofile-label';
+      edit_label_outline_color_label.textContent = 'Outline Color:';
+
+      const edit_label_outline_color_input = document.createElement('input');
+      edit_label_outline_color_input.type = 'color';
+      edit_label_outline_color_input.id = 'edit_label_outline_color';
+      edit_label_outline_color_input.value = '#000000'; // default black
+      edit_label_outline_color_input.disabled = false; // OFF by default — user picks color
+
+      const edit_label_outline_color_toggle_wrap = document.createElement('label');
+      edit_label_outline_color_toggle_wrap.className = 'geofile-toggle-wrap';
+      edit_label_outline_color_toggle_wrap.title = 'Use stroke color for label outline';
+      const edit_label_outline_color_sync = document.createElement('input');
+      edit_label_outline_color_sync.type = 'checkbox';
+      edit_label_outline_color_sync.id = 'edit_label_outline_color_sync';
+      edit_label_outline_color_sync.checked = false; // OFF by default — black outline
+      const edit_label_outline_color_slider = document.createElement('span');
+      edit_label_outline_color_slider.className = 'geofile-toggle-slider';
+      edit_label_outline_color_toggle_wrap.appendChild(edit_label_outline_color_sync);
+      edit_label_outline_color_toggle_wrap.appendChild(edit_label_outline_color_slider);
+      const edit_label_outline_color_text = document.createElement('span');
+      edit_label_outline_color_text.className = 'geofile-debug-label';
+      edit_label_outline_color_text.textContent = 'Match stroke';
+
+      edit_label_outline_color_sync.addEventListener('change', () => {
+        edit_label_outline_color_input.disabled = edit_label_outline_color_sync.checked;
+        if (edit_label_outline_color_sync.checked) edit_label_outline_color_input.value = edit_color.value;
+      });
+
+      edit_labelOutlineColorRow.appendChild(edit_label_outline_color_label);
+      edit_labelOutlineColorRow.appendChild(edit_label_outline_color_input);
+      edit_labelOutlineColorRow.appendChild(edit_label_outline_color_toggle_wrap);
+      edit_labelOutlineColorRow.appendChild(edit_label_outline_color_text);
+      editDialogBody.appendChild(edit_labelOutlineColorRow);
+
+      // Sync both color pickers when edit stroke color changes
+      edit_color.addEventListener('input', () => {
+        if (edit_label_color_sync.checked) edit_label_color_input.value = edit_color.value;
+        if (edit_label_outline_color_sync.checked) edit_label_outline_color_input.value = edit_color.value;
+      });
+
+      // --- Outline Width row ---
+      const edit_labelOutlineWidthRow = document.createElement('div');
+      edit_labelOutlineWidthRow.className = 'geofile-row';
+
+      const edit_label_outline_width_label = document.createElement('label');
+      edit_label_outline_width_label.setAttribute('for', 'edit_label_outline_width');
+      edit_label_outline_width_label.className = 'geofile-label';
+      edit_label_outline_width_label.textContent = 'Outline Width:';
+
+      const edit_label_outline_width_input = document.createElement('input');
+      edit_label_outline_width_input.type = 'number';
+      edit_label_outline_width_input.id = 'edit_label_outline_width';
+      edit_label_outline_width_input.min = '0';
+      edit_label_outline_width_input.max = '20';
+      edit_label_outline_width_input.step = '0.5';
+      edit_label_outline_width_input.value = '3';
+      edit_label_outline_width_input.style.width = '50px';
+      edit_label_outline_width_input.disabled = true;
+
+      const edit_label_outline_width_toggle_wrap = document.createElement('label');
+      edit_label_outline_width_toggle_wrap.className = 'geofile-toggle-wrap';
+      edit_label_outline_width_toggle_wrap.title = 'Calculate outline width as font size / 4';
+      const edit_label_outline_width_relative = document.createElement('input');
+      edit_label_outline_width_relative.type = 'checkbox';
+      edit_label_outline_width_relative.id = 'edit_label_outline_width_relative';
+      edit_label_outline_width_relative.checked = true;
+      const edit_label_outline_width_slider = document.createElement('span');
+      edit_label_outline_width_slider.className = 'geofile-toggle-slider';
+      edit_label_outline_width_toggle_wrap.appendChild(edit_label_outline_width_relative);
+      edit_label_outline_width_toggle_wrap.appendChild(edit_label_outline_width_slider);
+      const edit_label_outline_width_text = document.createElement('span');
+      edit_label_outline_width_text.className = 'geofile-debug-label';
+      edit_label_outline_width_text.textContent = 'Relative to font size';
+
+      edit_label_outline_width_relative.addEventListener('change', () => {
+        edit_label_outline_width_input.disabled = edit_label_outline_width_relative.checked;
+        if (edit_label_outline_width_relative.checked) {
+          edit_label_outline_width_input.value = String(Number(edit_font_size.value) / 4);
+        }
+      });
+      edit_font_size.addEventListener('input', () => {
+        if (edit_label_outline_width_relative.checked) {
+          edit_label_outline_width_input.value = String(Number(edit_font_size.value) / 4);
+        }
+      });
+
+      edit_labelOutlineWidthRow.appendChild(edit_label_outline_width_label);
+      edit_labelOutlineWidthRow.appendChild(edit_label_outline_width_input);
+      edit_labelOutlineWidthRow.appendChild(edit_label_outline_width_toggle_wrap);
+      edit_labelOutlineWidthRow.appendChild(edit_label_outline_width_text);
+      editDialogBody.appendChild(edit_labelOutlineWidthRow);
+
+      // --- Fill Opacity slider ---
+      const edit_fill_opacity_label = document.createElement('label');
+      edit_fill_opacity_label.setAttribute('for', 'edit_fill_opacity');
+      edit_fill_opacity_label.className = 'geofile-slider-label';
+      edit_fill_opacity_label.innerHTML = 'Fill Opacity: <strong>5%</strong>';
+
+      const edit_fill_opacity = document.createElement('input');
+      edit_fill_opacity.type = 'range';
+      edit_fill_opacity.id = 'edit_fill_opacity';
+      edit_fill_opacity.min = '0';
+      edit_fill_opacity.max = '1';
+      edit_fill_opacity.step = '0.01';
+      edit_fill_opacity.value = '0.05';
+
+      const updateEditFillOpacityStyle = () => {
+        const c = edit_color.value;
+        const r = parseInt(c.slice(1,3), 16), g = parseInt(c.slice(3,5), 16), b = parseInt(c.slice(5,7), 16);
+        edit_fill_opacity.style.backgroundColor = `rgba(${r},${g},${b},${edit_fill_opacity.value})`;
+        edit_fill_opacity.style.border = `2px solid ${c}`;
+      };
+      updateEditFillOpacityStyle();
+      edit_fill_opacity.addEventListener('input', function() {
+        edit_fill_opacity_label.innerHTML = `Fill Opacity: <strong>${Math.round(this.value * 100)}%</strong>`;
+        updateEditFillOpacityStyle();
+      });
+      edit_color.addEventListener('input', updateEditFillOpacityStyle);
+
+      editDialogBody.appendChild(edit_fill_opacity_label);
+      editDialogBody.appendChild(edit_fill_opacity);
+
+      // --- Line Stroke sub-heading ---
+      const edit_lineStrokeSub = document.createElement('div');
+      edit_lineStrokeSub.className = 'geofile-stroke-sub';
+      edit_lineStrokeSub.textContent = 'Line Stroke:';
+      editDialogBody.appendChild(edit_lineStrokeSub);
+
+      // --- Line Size row ---
+      const edit_lineSizeRow = document.createElement('div');
+      edit_lineSizeRow.className = 'geofile-row';
+      const edit_line_size_label = document.createElement('label');
+      edit_line_size_label.setAttribute('for', 'edit_line_size');
+      edit_line_size_label.className = 'geofile-label';
+      edit_line_size_label.textContent = 'Size:';
+      const edit_line_size = document.createElement('input');
+      edit_line_size.type = 'number';
+      edit_line_size.id = 'edit_line_size';
+      edit_line_size.min = '0';
+      edit_line_size.max = '10';
+      edit_line_size.step = '0.5';
+      edit_line_size.value = '1';
+      edit_line_size.style.width = '50px';
+      edit_lineSizeRow.appendChild(edit_line_size_label);
+      edit_lineSizeRow.appendChild(edit_line_size);
+      editDialogBody.appendChild(edit_lineSizeRow);
+
+      // --- Line Style radios ---
+      const edit_lineStyleRow = document.createElement('div');
+      edit_lineStyleRow.className = 'geofile-radio-row';
+      const edit_lineStyle_label = document.createElement('span');
+      edit_lineStyle_label.className = 'geofile-label';
+      edit_lineStyle_label.textContent = 'Style:';
+      edit_lineStyleRow.appendChild(edit_lineStyle_label);
+      const edit_strokeRadioOptions = document.createElement('div');
+      edit_strokeRadioOptions.className = 'geofile-radio-options';
+      for (const type of [{ value: 'solid', label: 'Solid' }, { value: 'dash', label: 'Dash' }, { value: 'dot', label: 'Dot' }]) {
+        const radioWrapper = document.createElement('label');
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.value = type.value;
+        radio.name = 'edit_line_stroke_style';
+        if (type.value === 'solid') radio.checked = true;
+        radioWrapper.appendChild(radio);
+        radioWrapper.appendChild(document.createTextNode(type.label));
+        edit_strokeRadioOptions.appendChild(radioWrapper);
+      }
+      edit_lineStyleRow.appendChild(edit_strokeRadioOptions);
+      editDialogBody.appendChild(edit_lineStyleRow);
+
+      // --- Stroke Opacity slider ---
+      const edit_line_stroke_opacity_label = document.createElement('label');
+      edit_line_stroke_opacity_label.setAttribute('for', 'edit_line_stroke_opacity');
+      edit_line_stroke_opacity_label.className = 'geofile-slider-label';
+      edit_line_stroke_opacity_label.innerHTML = 'Stroke Opacity: <strong>100%</strong>';
+
+      const edit_line_stroke_opacity = document.createElement('input');
+      edit_line_stroke_opacity.type = 'range';
+      edit_line_stroke_opacity.id = 'edit_line_stroke_opacity';
+      edit_line_stroke_opacity.min = '0';
+      edit_line_stroke_opacity.max = '1';
+      edit_line_stroke_opacity.step = '0.05';
+      edit_line_stroke_opacity.value = '1';
+
+      const updateEditLineOpacityStyle = () => {
+        const c = edit_color.value;
+        const r = parseInt(c.slice(1,3), 16), g = parseInt(c.slice(3,5), 16), b = parseInt(c.slice(5,7), 16);
+        edit_line_stroke_opacity.style.backgroundColor = `rgba(${r},${g},${b},${edit_line_stroke_opacity.value})`;
+        edit_line_stroke_opacity.style.border = `2px solid ${c}`;
+      };
+      updateEditLineOpacityStyle();
+      edit_line_stroke_opacity.addEventListener('input', function() {
+        edit_line_stroke_opacity_label.innerHTML = `Stroke Opacity: <strong>${Math.round(this.value * 100)}%</strong>`;
+        updateEditLineOpacityStyle();
+      });
+      edit_color.addEventListener('input', updateEditLineOpacityStyle);
+
+      editDialogBody.appendChild(edit_line_stroke_opacity_label);
+      editDialogBody.appendChild(edit_line_stroke_opacity);
+
+      // --- Label Position grid ---
+      const edit_labelPosGrid = document.createElement('div');
+      edit_labelPosGrid.className = 'geofile-label-pos-grid';
+
+      const edit_horizCol = document.createElement('div');
+      edit_horizCol.className = 'geofile-label-pos-col';
+      const edit_horizHeader = document.createElement('div');
+      edit_horizHeader.className = 'geofile-label-pos-col-header';
+      edit_horizHeader.textContent = 'Horizontal';
+      edit_horizCol.appendChild(edit_horizHeader);
+      for (const pos of [{ value: 'l', label: 'Left' }, { value: 'c', label: 'Center' }, { value: 'r', label: 'Right' }]) {
+        const rw = document.createElement('label');
+        const r = document.createElement('input');
+        r.type = 'radio'; r.value = pos.value; r.name = 'edit_label_pos_horizontal';
+        if (pos.value === 'c') r.checked = true;
+        rw.appendChild(r); rw.appendChild(document.createTextNode(pos.label));
+        edit_horizCol.appendChild(rw);
+      }
+
+      const edit_vertCol = document.createElement('div');
+      edit_vertCol.className = 'geofile-label-pos-col';
+      const edit_vertHeader = document.createElement('div');
+      edit_vertHeader.className = 'geofile-label-pos-col-header';
+      edit_vertHeader.textContent = 'Vertical';
+      edit_vertCol.appendChild(edit_vertHeader);
+      for (const pos of [{ value: 't', label: 'Top' }, { value: 'm', label: 'Middle' }, { value: 'b', label: 'Bottom' }]) {
+        const rw = document.createElement('label');
+        const r = document.createElement('input');
+        r.type = 'radio'; r.value = pos.value; r.name = 'edit_label_pos_vertical';
+        if (pos.value === 'm') r.checked = true;
+        rw.appendChild(r); rw.appendChild(document.createTextNode(pos.label));
+        edit_vertCol.appendChild(rw);
+      }
+
+      edit_labelPosGrid.appendChild(edit_horizCol);
+      edit_labelPosGrid.appendChild(edit_vertCol);
+      editDialogBody.appendChild(edit_labelPosGrid);
+
+      // --- Apply Changes button ---
+      const edit_applyBtn = createButton('Apply Changes', '#0066cc', '#0052a3', '#FFFFFF', 'button');
+      edit_applyBtn.style.marginTop = '8px';
+      edit_applyBtn.title = 'Redraw layer with new style settings';
+      edit_applyBtn.addEventListener('click', applyLayerEdits);
+      editDialogBody.appendChild(edit_applyBtn);
+
+      editPanel.appendChild(editDialogBody);
+
+      // Append dialog to wz-page-content (same parent as WIV popup)
+      const mapElement = document.getElementsByTagName('wz-page-content')[0];
+      if (mapElement) {
+        mapElement.appendChild(editPanel);
+      } else {
+        console.warn(`${scriptName}: Could not find 'wz-page-content' to attach edit dialog.`);
+      }
 
       let geoform = document.createElement('form');
       geoform.style.cssText = 'display: flex; flex-direction: column;';
@@ -514,7 +919,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       let input_color_label = document.createElement('label');
       input_color_label.setAttribute('for', 'color');
       input_color_label.className = 'geofile-label';
-      input_color_label.textContent = 'Color:';
+      input_color_label.textContent = 'Stroke Color:';
 
       let input_color = document.createElement('input');
       input_color.type = 'color';
@@ -543,6 +948,166 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       colorFontSizeRow.appendChild(input_font_size_label);
       colorFontSizeRow.appendChild(input_font_size);
       settingsCard.appendChild(colorFontSizeRow);
+
+      // Label Color row
+      let labelColorRow = document.createElement('div');
+      labelColorRow.className = 'geofile-row';
+
+      let label_color_label = document.createElement('label');
+      label_color_label.setAttribute('for', 'label_color');
+      label_color_label.className = 'geofile-label';
+      label_color_label.textContent = 'Label Color:';
+
+      let label_color_input = document.createElement('input');
+      label_color_input.type = 'color';
+      label_color_input.id = 'label_color';
+      label_color_input.value = input_color.value; // initialize to current stroke color
+      label_color_input.name = 'label_color';
+      label_color_input.disabled = true; // ON by default — synced to stroke color
+
+      // Label Color toggle switch — label text is a sibling in the row (matches debug toggle pattern)
+      let label_color_toggle_wrap = document.createElement('label');
+      label_color_toggle_wrap.className = 'geofile-toggle-wrap';
+      label_color_toggle_wrap.title = 'Use stroke color for label text';
+
+      let label_color_sync = document.createElement('input');
+      label_color_sync.type = 'checkbox';
+      label_color_sync.id = 'label_color_sync';
+      label_color_sync.checked = true;
+
+      let label_color_toggle_slider = document.createElement('span');
+      label_color_toggle_slider.className = 'geofile-toggle-slider';
+
+      label_color_toggle_wrap.appendChild(label_color_sync);
+      label_color_toggle_wrap.appendChild(label_color_toggle_slider);
+
+      let label_color_toggle_text = document.createElement('span');
+      label_color_toggle_text.className = 'geofile-debug-label';
+      label_color_toggle_text.textContent = 'Match stroke';
+
+      label_color_sync.addEventListener('change', () => {
+        label_color_input.disabled = label_color_sync.checked;
+        if (label_color_sync.checked) label_color_input.value = input_color.value;
+      });
+
+      labelColorRow.appendChild(label_color_label);
+      labelColorRow.appendChild(label_color_input);
+      labelColorRow.appendChild(label_color_toggle_wrap);
+      labelColorRow.appendChild(label_color_toggle_text);
+      settingsCard.appendChild(labelColorRow);
+
+      // Outline Color row
+      let labelOutlineColorRow = document.createElement('div');
+      labelOutlineColorRow.className = 'geofile-row';
+
+      let label_outline_color_label = document.createElement('label');
+      label_outline_color_label.setAttribute('for', 'label_outline_color');
+      label_outline_color_label.className = 'geofile-label';
+      label_outline_color_label.textContent = 'Outline Color:';
+
+      let label_outline_color_input = document.createElement('input');
+      label_outline_color_input.type = 'color';
+      label_outline_color_input.id = 'label_outline_color';
+      label_outline_color_input.value = '#000000'; // default black
+      label_outline_color_input.name = 'label_outline_color';
+      label_outline_color_input.disabled = false; // OFF by default — user picks color
+
+      // Outline Color toggle switch — label text is a sibling in the row (matches debug toggle pattern)
+      let label_outline_color_toggle_wrap = document.createElement('label');
+      label_outline_color_toggle_wrap.className = 'geofile-toggle-wrap';
+      label_outline_color_toggle_wrap.title = 'Use stroke color for label outline';
+
+      let label_outline_color_sync = document.createElement('input');
+      label_outline_color_sync.type = 'checkbox';
+      label_outline_color_sync.id = 'label_outline_color_sync';
+      label_outline_color_sync.checked = false; // OFF by default — black outline
+
+      let label_outline_color_toggle_slider = document.createElement('span');
+      label_outline_color_toggle_slider.className = 'geofile-toggle-slider';
+
+      label_outline_color_toggle_wrap.appendChild(label_outline_color_sync);
+      label_outline_color_toggle_wrap.appendChild(label_outline_color_toggle_slider);
+
+      let label_outline_color_toggle_text = document.createElement('span');
+      label_outline_color_toggle_text.className = 'geofile-debug-label';
+      label_outline_color_toggle_text.textContent = 'Match stroke';
+
+      label_outline_color_sync.addEventListener('change', () => {
+        label_outline_color_input.disabled = label_outline_color_sync.checked;
+        if (label_outline_color_sync.checked) label_outline_color_input.value = input_color.value;
+      });
+
+      labelOutlineColorRow.appendChild(label_outline_color_label);
+      labelOutlineColorRow.appendChild(label_outline_color_input);
+      labelOutlineColorRow.appendChild(label_outline_color_toggle_wrap);
+      labelOutlineColorRow.appendChild(label_outline_color_toggle_text);
+      settingsCard.appendChild(labelOutlineColorRow);
+
+      // Sync both color pickers when stroke color changes
+      input_color.addEventListener('input', () => {
+        if (label_color_sync.checked) label_color_input.value = input_color.value;
+        if (label_outline_color_sync.checked) label_outline_color_input.value = input_color.value;
+      });
+
+      // Outline Width row
+      let labelOutlineWidthRow = document.createElement('div');
+      labelOutlineWidthRow.className = 'geofile-row';
+
+      let label_outline_width_label = document.createElement('label');
+      label_outline_width_label.setAttribute('for', 'label_outline_width');
+      label_outline_width_label.className = 'geofile-label';
+      label_outline_width_label.textContent = 'Outline Width:';
+
+      let label_outline_width_input = document.createElement('input');
+      label_outline_width_input.type = 'number';
+      label_outline_width_input.id = 'label_outline_width';
+      label_outline_width_input.min = '0';
+      label_outline_width_input.max = '20';
+      label_outline_width_input.step = '0.5';
+      label_outline_width_input.value = String(Number(input_font_size.value) / 4); // fontsize / 4 default
+      label_outline_width_input.name = 'label_outline_width';
+      label_outline_width_input.style.width = '50px';
+      label_outline_width_input.disabled = true; // ON by default — relative to font size
+
+      // Relative to Font Size toggle — matches debug toggle pattern
+      let label_outline_width_toggle_wrap = document.createElement('label');
+      label_outline_width_toggle_wrap.className = 'geofile-toggle-wrap';
+      label_outline_width_toggle_wrap.title = 'Calculate outline width as font size / 4';
+
+      let label_outline_width_relative = document.createElement('input');
+      label_outline_width_relative.type = 'checkbox';
+      label_outline_width_relative.id = 'label_outline_width_relative';
+      label_outline_width_relative.checked = true; // ON by default
+
+      let label_outline_width_toggle_slider = document.createElement('span');
+      label_outline_width_toggle_slider.className = 'geofile-toggle-slider';
+
+      label_outline_width_toggle_wrap.appendChild(label_outline_width_relative);
+      label_outline_width_toggle_wrap.appendChild(label_outline_width_toggle_slider);
+
+      let label_outline_width_toggle_text = document.createElement('span');
+      label_outline_width_toggle_text.className = 'geofile-debug-label';
+      label_outline_width_toggle_text.textContent = 'Relative to font size';
+
+      label_outline_width_relative.addEventListener('change', () => {
+        label_outline_width_input.disabled = label_outline_width_relative.checked;
+        if (label_outline_width_relative.checked) {
+          label_outline_width_input.value = String(Number(input_font_size.value) / 4);
+        }
+      });
+
+      // Keep displayed value in sync when font size changes and relative is ON
+      input_font_size.addEventListener('input', () => {
+        if (label_outline_width_relative.checked) {
+          label_outline_width_input.value = String(Number(input_font_size.value) / 4);
+        }
+      });
+
+      labelOutlineWidthRow.appendChild(label_outline_width_label);
+      labelOutlineWidthRow.appendChild(label_outline_width_input);
+      labelOutlineWidthRow.appendChild(label_outline_width_toggle_wrap);
+      labelOutlineWidthRow.appendChild(label_outline_width_toggle_text);
+      settingsCard.appendChild(labelOutlineWidthRow);
 
       // Fill Opacity
       let input_fill_opacity_label = document.createElement('label');
@@ -1239,6 +1804,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
    * - Relies on DOM elements and user inputs that need to be correctly set up in the environment for this function to work.
    *****************************************************************************/
   function draw_WKT() {
+    if (editingLayer) {
+      WazeWrap.Alerts.warning(scriptName, `Please Apply or Cancel your edits to "<b>${editingLayer.filename}</b>" before importing a new layer.`);
+      return;
+    }
     // Retrieve style and layer options
     let color = document.getElementById('color').value;
     let fillOpacity = document.getElementById('fill_opacity').value;
@@ -1248,6 +1817,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     let layerName = document.getElementById('input_WKT_name').value.trim();
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
+    let fontColor = document.getElementById('label_color_sync').checked ? null : document.getElementById('label_color').value;
+    let labelOutlineColor = document.getElementById('label_outline_color_sync').checked ? null : document.getElementById('label_outline_color').value;
+    let labelOutlineWidth = document.getElementById('label_outline_width').value;
+    let labelOutlineWidthRelative = document.getElementById('label_outline_width_relative').checked;
 
     // Check for empty layer name
     if (!layerName) {
@@ -1296,7 +1869,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       const geojson = geoWKTer.toGeoJSON(wktString); // Convert to GeoJSON
 
       // Prepare the layer object and invoke parseFile, which handles layer creation
-      const obj = new layerStoreObj(geojson, color, 'GEOJSON', layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '${Name}', 'WKT');
+      const obj = new layerStoreObj(geojson, color, 'GEOJSON', layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '${Name}', 'WKT', fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative);
       parseFile(obj);
     } catch (error) {
       console.error(`${scriptName}: Error processing WKT input`, error);
@@ -1333,6 +1906,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
    * - Alerts on attempts to render already loaded boundaries.
    *****************************************************************************/
   function drawBoundary(item) {
+    if (editingLayer) {
+      WazeWrap.Alerts.warning(scriptName, `Please Apply or Cancel your edits to "<b>${editingLayer.filename}</b>" before importing a new layer.`);
+      return;
+    }
     if (debug) console.log(`drawBoundary called with item: ${item}`);
     // Retrieve styling options
     let color = document.getElementById('color').value;
@@ -1342,6 +1919,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     let linesize = document.getElementById('line_size').value;
     let linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     let labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
+    let fontColor = document.getElementById('label_color_sync').checked ? null : document.getElementById('label_color').value;
+    let labelOutlineColor = document.getElementById('label_outline_color_sync').checked ? null : document.getElementById('label_outline_color').value;
+    let labelOutlineWidth = document.getElementById('label_outline_width').value;
+    let labelOutlineWidthRelative = document.getElementById('label_outline_width_relative').checked;
 
     // Get boundary geoJSON from is US Census Bureau
     getArcGISdata(item)
@@ -1386,7 +1967,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
         // Create the layer object and invoke parseFile since the layer does not exist
         const labelTemplate = item === 'zipcode' ? 'ZIP CODE: ${BASENAME}' : '${NAME}';
-        const obj = new layerStoreObj(geojson, color, 'GEOJSON', layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelTemplate, 'GEOJSON');
+        const obj = new layerStoreObj(geojson, color, 'GEOJSON', layerName, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, labelTemplate, 'GEOJSON', fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative);
         parseFile(obj);
       })
       .catch((error) => {
@@ -1416,6 +1997,11 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
    *************************************************************************/
   function addGeometryLayer() {
     const fileList = document.getElementById('GeometryFile');
+    if (editingLayer) {
+      WazeWrap.Alerts.warning(scriptName, `Please Apply or Cancel your edits to "<b>${editingLayer.filename}</b>" before importing a new layer.`);
+      fileList.value = ''; // reset so the same file can be re-selected after cancelling edit
+      return;
+    }
     const file = fileList.files[0];
     if (!file) return; // dialog was cancelled — no file selected
     fileList.value = '';
@@ -1434,6 +2020,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     const linesize = document.getElementById('line_size').value;
     const linestyle = document.querySelector('input[name="line_stroke_style"]:checked').value;
     const labelpos = document.querySelector('input[name="label_pos_horizontal"]:checked').value + document.querySelector('input[name="label_pos_vertical"]:checked').value;
+    const fontColor = document.getElementById('label_color_sync').checked ? null : document.getElementById('label_color').value;
+    const labelOutlineColor = document.getElementById('label_outline_color_sync').checked ? null : document.getElementById('label_outline_color').value;
+    const labelOutlineWidth = document.getElementById('label_outline_width').value;
+    const labelOutlineWidthRelative = document.getElementById('label_outline_width_relative').checked;
 
     const reader = new FileReader();
 
@@ -1457,7 +2047,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
                   const SHPgeoJSON = geoSHPer.toGeoJSON();
                   if (debug) console.timeEnd(`${scriptName}: .ZIP shapefile conversion in`);
 
-                  const fileObj = new layerStoreObj(SHPgeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', 'SHP');
+                  const fileObj = new layerStoreObj(SHPgeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', 'SHP', fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative);
                   parseFile(fileObj);
                 } catch (error) {
                   toggleParsingMessage(false);
@@ -1478,7 +2068,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
                 const WKTgeoJSON = geoWKTer.toGeoJSON(wktDoc);
 
                 if (debug) console.timeEnd(`${scriptName}: .WKT conversion in`);
-                fileObj = new layerStoreObj(WKTgeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
+                fileObj = new layerStoreObj(WKTgeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext, fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -1498,7 +2088,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
                 const GPXtoGeoJSON = geoGPXer.toGeoJSON(gpxDoc);
 
                 if (debug) console.timeEnd(`${scriptName}: .GPX conversion in`);
-                fileObj = new layerStoreObj(GPXtoGeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
+                fileObj = new layerStoreObj(GPXtoGeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext, fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -1518,7 +2108,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
                 const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
 
                 if (debug) console.timeEnd(`${scriptName}: .KML conversion in`);
-                fileObj = new layerStoreObj(KMLtoGeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
+                fileObj = new layerStoreObj(KMLtoGeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext, fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -1550,7 +2140,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
                     const KMLtoGeoJSON = geoKMLer.toGeoJSON(kmlDoc, true);
 
                     if (debug) console.timeEnd(`${scriptName}: .KMZ conversion in`);
-                    fileObj = new layerStoreObj(KMLtoGeoJSON, color, 'GEOJSON', uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', 'KMZ');
+                    fileObj = new layerStoreObj(KMLtoGeoJSON, color, 'GEOJSON', uniqueFilename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', 'KMZ', fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative);
                     parseFile(fileObj);
                   });
                 } catch (error) {
@@ -1572,7 +2162,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
                 if (debug) console.timeEnd(`${scriptName}: .GML conversion in`);
 
-                fileObj = new layerStoreObj(GMLtoGeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
+                fileObj = new layerStoreObj(GMLtoGeoJSON, color, 'GEOJSON', filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext, fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -1585,7 +2175,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
                 if (debug) console.log(`${scriptName}: .GEOJSON file found...`);
                 toggleParsingMessage(true); // turned off in parseFile()
                 const geojsonData = JSON.parse(e.target.result); // Parse the .GEOJSON file content as a JSON object
-                fileObj = new layerStoreObj(geojsonData, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext);
+                fileObj = new layerStoreObj(geojsonData, color, fileext, filename, fillOpacity, fontsize, lineopacity, linesize, linestyle, labelpos, '', fileext, fontColor, labelOutlineColor, labelOutlineWidth, labelOutlineWidthRelative);
                 parseFile(fileObj);
               } catch (error) {
                 toggleParsingMessage(false);
@@ -2077,6 +2667,22 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     try {
+      // Mutable style state — styleContext getters close over this object.
+      // Updating fields + calling wmeSDK.Map.redrawLayer() applies new styles instantly
+      // without re-processing or re-adding features.
+      const mutableStyle = {
+        color:             fileObj.color,
+        lineopacity:       Number(fileObj.lineopacity),
+        linesize:          Number(fileObj.linesize),
+        linestyle:         fileObj.linestyle,
+        fillOpacity:       Number(fileObj.fillOpacity),
+        fontsize:          Number(fileObj.fontsize),
+        fontColor:         fileObj.fontColor ?? fileObj.color,
+        labelOutlineColor: fileObj.labelOutlineColor !== undefined ? (fileObj.labelOutlineColor ?? fileObj.color) : 'black',
+        labelOutlineWidth: (fileObj.labelOutlineWidthRelative !== false) ? Number(fileObj.fontsize) / 4 : Number(fileObj.labelOutlineWidth),
+        labelpos:          fileObj.labelpos,
+      };
+
       let labelContext = {
         formatLabel: (context) => {
           let labelTemplate = fileObj.labelattribute;
@@ -2110,23 +2716,19 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
           return labelTemplate;
         },
-      };
-
-      const layerStyle = {
-        stroke: true,
-        strokeColor: fileObj.color,
-        strokeOpacity: fileObj.lineopacity,
-        strokeWidth: fileObj.linesize,
-        strokeDashstyle: fileObj.linestyle,
-        fillColor: fileObj.color,
-        fillOpacity: fileObj.fillOpacity,
-        pointRadius: fileObj.fontsize,
-        fontColor: fileObj.color,
-        fontSize: fileObj.fontsize,
-        labelOutlineColor: 'black',
-        labelOutlineWidth: fileObj.fontsize / 4,
-        labelAlign: fileObj.labelpos,
-        label: '${formatLabel}',
+        // Live getters — called by the SDK at render time via '${name}' template refs.
+        // The SDK holds a reference to labelContext and calls these fresh on every render,
+        // so updating mutableStyle + calling wmeSDK.Map.redrawLayer() is all that's needed.
+        getColor:             () => mutableStyle.color,
+        getLineopacity:       () => mutableStyle.lineopacity,
+        getLinesize:          () => mutableStyle.linesize,
+        getLinestyle:         () => mutableStyle.linestyle,
+        getFillOpacity:       () => mutableStyle.fillOpacity,
+        getFontsize:          () => mutableStyle.fontsize,
+        getFontColor:         () => mutableStyle.fontColor,
+        getLabelOutlineColor: () => mutableStyle.labelOutlineColor,
+        getLabelOutlineWidth: () => mutableStyle.labelOutlineWidth,
+        getLabelpos:          () => mutableStyle.labelpos,
       };
 
       const layerConfig = {
@@ -2134,7 +2736,22 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         styleRules: [
           {
             predicate: () => true,
-            style: layerStyle,
+            style: {
+              stroke: true,
+              strokeColor:       '${getColor}',
+              strokeOpacity:     '${getLineopacity}',
+              strokeWidth:       '${getLinesize}',
+              strokeDashstyle:   '${getLinestyle}',
+              fillColor:         '${getColor}',
+              fillOpacity:       '${getFillOpacity}',
+              pointRadius:       '${getFontsize}',
+              fontColor:         '${getFontColor}',
+              fontSize:          '${getFontsize}',
+              labelOutlineColor: '${getLabelOutlineColor}',
+              labelOutlineWidth: '${getLabelOutlineWidth}',
+              labelAlign:        '${getLabelpos}',
+              label:             '${formatLabel}',
+            },
           },
         ],
       };
@@ -2165,6 +2782,9 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
           return;
         }
       }
+
+      // Register the mutable style state so applyLayerEdits can update it for live redraws
+      layerStyleStates.set(layerid, mutableStyle);
 
       // Set visibility to true for the layer
       wmeSDK.Map.setLayerVisibility({ layerName: layerid, visibility: true });
@@ -2280,6 +2900,57 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     });
   }
 
+  // Style fields persisted as a tiny uncompressed override alongside the compressed file content.
+  // Storing only these avoids re-compressing the (potentially large) GeoJSON fileContent on every edit.
+  const STYLE_OVERRIDE_FIELDS = [
+    'color', 'fillOpacity', 'fontsize', 'lineopacity', 'linesize', 'linestyle',
+    'labelpos', 'fontColor', 'labelOutlineColor', 'labelOutlineWidth', 'labelOutlineWidthRelative',
+  ];
+
+  // Updates style fields in IndexedDB without touching the compressed GeoJSON content.
+  // Reads the existing record, attaches a small uncompressed styleOverride, and writes it back.
+  async function updateLayerInIndexedDB(fileObj) {
+    if (!db) return Promise.reject(new Error('Database not initialized'));
+
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(['layers'], 'readwrite');
+      const store = transaction.objectStore('layers');
+
+      const getRequest = store.get(fileObj.filename);
+
+      getRequest.onsuccess = function () {
+        const existing = getRequest.result;
+        if (!existing) {
+          reject(new Error(`Layer "${fileObj.filename}" not found in IndexedDB for style update`));
+          return;
+        }
+
+        // Build a tiny style-only override — no LZString compression needed
+        const styleOverride = {};
+        STYLE_OVERRIDE_FIELDS.forEach((f) => { styleOverride[f] = fileObj[f]; });
+
+        // Keep the original compressedData (unchanged fileContent) and attach the override
+        const updatedRecord = {
+          filename: existing.filename,
+          compressedData: existing.compressedData,
+          styleOverride,
+        };
+
+        const putRequest = store.put(updatedRecord);
+        putRequest.onsuccess = () => {
+          console.log(`${scriptName}: Updated style override for "${fileObj.filename}" in IndexedDB`);
+          resolve();
+        };
+        putRequest.onerror = (event) => {
+          console.error(`${scriptName}: Failed to update style override in IndexedDB`, event.target.error);
+          reject(new Error('Failed to update layer in database'));
+        };
+      };
+
+      getRequest.onerror = () => reject(new Error('Failed to read layer for style update'));
+    });
+  }
+
   function toggleLoadingMessage(show) {
     const existingMessage = document.getElementById('WMEGeoLoadingMessage');
 
@@ -2324,6 +2995,32 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         parsingMessage.appendChild(text);
 
         document.body.appendChild(parsingMessage);
+      }
+    } else {
+      if (existingMessage) {
+        existingMessage.remove();
+      }
+    }
+  }
+
+  function toggleRedrawMessage(show) {
+    const existingMessage = document.getElementById('WMEGeoRedrawMessage');
+
+    if (show) {
+      if (!existingMessage) {
+        const redrawMessage = document.createElement('div');
+        redrawMessage.id = 'WMEGeoRedrawMessage';
+
+        const icon = document.createElement('i');
+        icon.className = 'fa fa-refresh fa-spin geo-toast-icon';
+        redrawMessage.appendChild(icon);
+
+        const text = document.createElement('span');
+        text.className = 'geo-toast-text';
+        text.textContent = 'Applying style changes, please wait\u2026';
+        redrawMessage.appendChild(text);
+
+        document.body.appendChild(redrawMessage);
       }
     } else {
       if (existingMessage) {
@@ -2750,6 +3447,12 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     const tooltipContent = `File Type: ${fileext}\nLabel: ${labelattribute}\nProjection: ${externalProjection}`;
     fileText.title = tooltipContent;
 
+    // Click the layer name to open the edit dialog
+    fileText.addEventListener('click', async () => {
+      const fileObj = await loadLayer(filename);
+      if (fileObj) selectLayerForEdit(fileObj);
+    });
+
     liObj.appendChild(fileText);
 
     let removeButton = document.createElement('button');
@@ -2761,6 +3464,208 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
     geolist.appendChild(liObj);
   }
+
+  // ── Layer Edit Dialog functions ──────────────────────────────────────────
+
+  function populateEditPanel(fileObj) {
+    document.getElementById('edit_color').value = fileObj.color || '#00bfff';
+    document.getElementById('edit_color').dispatchEvent(new Event('input')); // sync sliders + color pickers
+
+    document.getElementById('edit_font_size').value = fileObj.fontsize || '12';
+    document.getElementById('edit_font_size').dispatchEvent(new Event('input')); // sync outline width
+
+    const editFillOpacity = document.getElementById('edit_fill_opacity');
+    editFillOpacity.value = fileObj.fillOpacity || '0.05';
+    editFillOpacity.dispatchEvent(new Event('input'));
+
+    document.getElementById('edit_line_size').value = fileObj.linesize || '1';
+
+    const lineStyleValue = fileObj.linestyle || 'solid';
+    const lineStyleRadio = document.querySelector(`input[name="edit_line_stroke_style"][value="${lineStyleValue}"]`);
+    if (lineStyleRadio) lineStyleRadio.checked = true;
+
+    const editLineOpacity = document.getElementById('edit_line_stroke_opacity');
+    editLineOpacity.value = fileObj.lineopacity || '1';
+    editLineOpacity.dispatchEvent(new Event('input'));
+
+    // Label position — labelpos is a 2-char string e.g. 'cm'
+    const labelpos = fileObj.labelpos || 'cm';
+    const horizRadio = document.querySelector(`input[name="edit_label_pos_horizontal"][value="${labelpos.charAt(0)}"]`);
+    if (horizRadio) horizRadio.checked = true;
+    const vertRadio = document.querySelector(`input[name="edit_label_pos_vertical"][value="${labelpos.charAt(1)}"]`);
+    if (vertRadio) vertRadio.checked = true;
+
+    // fontColor: null/undefined = match stroke
+    const editLabelColorSync = document.getElementById('edit_label_color_sync');
+    const editLabelColorInput = document.getElementById('edit_label_color');
+    if (fileObj.fontColor == null) {
+      editLabelColorSync.checked = true;
+      editLabelColorInput.disabled = true;
+      editLabelColorInput.value = fileObj.color || '#00bfff';
+    } else {
+      editLabelColorSync.checked = false;
+      editLabelColorInput.disabled = false;
+      editLabelColorInput.value = fileObj.fontColor;
+    }
+
+    // labelOutlineColor: null/undefined = match stroke
+    const editOutlineColorSync = document.getElementById('edit_label_outline_color_sync');
+    const editOutlineColorInput = document.getElementById('edit_label_outline_color');
+    if (fileObj.labelOutlineColor == null) {
+      editOutlineColorSync.checked = true;
+      editOutlineColorInput.disabled = true;
+      editOutlineColorInput.value = fileObj.color || '#00bfff';
+    } else {
+      editOutlineColorSync.checked = false;
+      editOutlineColorInput.disabled = false;
+      editOutlineColorInput.value = fileObj.labelOutlineColor;
+    }
+
+    // labelOutlineWidthRelative: !== false means relative (including undefined for old layers)
+    const editOutlineWidthRelative = document.getElementById('edit_label_outline_width_relative');
+    const editOutlineWidthInput = document.getElementById('edit_label_outline_width');
+    const isRelative = (fileObj.labelOutlineWidthRelative !== false);
+    editOutlineWidthRelative.checked = isRelative;
+    if (isRelative) {
+      editOutlineWidthInput.disabled = true;
+      editOutlineWidthInput.value = String(Number(fileObj.fontsize || 12) / 4);
+    } else {
+      editOutlineWidthInput.disabled = false;
+      editOutlineWidthInput.value = fileObj.labelOutlineWidth || '3';
+    }
+  }
+
+  function selectLayerForEdit(fileObj) {
+    // De-highlight previous selection
+    if (editingLayer) {
+      const prevLi = document.getElementById(editingLayer.filename.replace(/[^a-z0-9_-]/gi, '_'));
+      if (prevLi) prevLi.classList.remove('geofile-editing');
+    }
+
+    editingLayer = fileObj;
+
+    // Highlight new selection
+    const currentLi = document.getElementById(fileObj.filename.replace(/[^a-z0-9_-]/gi, '_'));
+    if (currentLi) currentLi.classList.add('geofile-editing');
+
+    // Update title and populate controls
+    document.getElementById('edit_panel_title').textContent = `\u270F Edit: ${fileObj.filename}`;
+    populateEditPanel(fileObj);
+
+    editPanel.style.display = 'block';
+  }
+
+  function cancelLayerEdit() {
+    if (editingLayer) {
+      const li = document.getElementById(editingLayer.filename.replace(/[^a-z0-9_-]/gi, '_'));
+      if (li) li.classList.remove('geofile-editing');
+    }
+    editingLayer = null;
+    editPanel.style.display = 'none';
+  }
+
+  async function applyLayerEdits() {
+    if (!editingLayer) return;
+
+    const newColor       = document.getElementById('edit_color').value;
+    const newFontsize    = document.getElementById('edit_font_size').value;
+    const newFillOpacity = document.getElementById('edit_fill_opacity').value;
+    const newLinesize    = document.getElementById('edit_line_size').value;
+    const newLinestyle   = document.querySelector('input[name="edit_line_stroke_style"]:checked').value;
+    const newLineopacity = document.getElementById('edit_line_stroke_opacity').value;
+    const newHoriz       = document.querySelector('input[name="edit_label_pos_horizontal"]:checked').value;
+    const newVert        = document.querySelector('input[name="edit_label_pos_vertical"]:checked').value;
+
+    const labelColorSync = document.getElementById('edit_label_color_sync').checked;
+    const newFontColor   = labelColorSync ? null : document.getElementById('edit_label_color').value;
+
+    const outlineColorSync     = document.getElementById('edit_label_outline_color_sync').checked;
+    const newLabelOutlineColor = outlineColorSync ? null : document.getElementById('edit_label_outline_color').value;
+
+    const newLabelOutlineWidthRelative = document.getElementById('edit_label_outline_width_relative').checked;
+    const newLabelOutlineWidth         = document.getElementById('edit_label_outline_width').value;
+
+    const updatedFileObj = Object.assign({}, editingLayer);
+    updatedFileObj.color                     = newColor;
+    updatedFileObj.fontsize                  = newFontsize;
+    updatedFileObj.fillOpacity               = newFillOpacity;
+    updatedFileObj.linesize                  = newLinesize;
+    updatedFileObj.linestyle                 = newLinestyle;
+    updatedFileObj.lineopacity               = newLineopacity;
+    updatedFileObj.labelpos                  = newHoriz + newVert;
+    updatedFileObj.fontColor                 = newFontColor;
+    updatedFileObj.labelOutlineColor         = newLabelOutlineColor;
+    updatedFileObj.labelOutlineWidth         = newLabelOutlineWidth;
+    updatedFileObj.labelOutlineWidthRelative = newLabelOutlineWidthRelative;
+
+    await redrawLayer(updatedFileObj);
+
+    editingLayer = updatedFileObj;
+
+    // Update the list item text color to reflect the new stroke color
+    const li = document.getElementById(updatedFileObj.filename.replace(/[^a-z0-9_-]/gi, '_'));
+    if (li) {
+      const span = li.querySelector('.geofile-item-text');
+      if (span) span.style.color = updatedFileObj.color;
+    }
+  }
+
+  async function redrawLayer(fileObj) {
+    const layerName = fileObj.filename.replace(/[^a-z0-9_-]/gi, '_');
+    const styleState = layerStyleStates.get(layerName);
+
+    toggleRedrawMessage(true);
+    // Yield briefly so the toast renders before any synchronous work blocks the UI thread
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    try {
+      if (!styleState) {
+        // Fallback for any layer not registered in layerStyleStates (should not occur in normal use)
+        console.warn(`${scriptName}: redrawLayer — no style state found for "${layerName}", falling back to full re-parse.`);
+        try { wmeSDK.Map.removeLayer({ layerName }); } catch (e) { /* already removed */ }
+        document.getElementById(`t_${layerName}`)?.parentElement?.removeChild(document.getElementById(`t_${layerName}`));
+        document.getElementById(layerName)?.remove();
+        try { await removeLayerFromIndexedDB(fileObj.filename); } catch (e) { /* ignore */ }
+        parseFile(fileObj);
+        return;
+      }
+
+      // 1. Push all updated style values into the mutable state object.
+      //    The styleContext getters close over this object, so the SDK will pick up
+      //    the new values on the next render pass triggered by redrawLayer() below.
+      styleState.color             = fileObj.color;
+      styleState.lineopacity       = Number(fileObj.lineopacity);
+      styleState.linesize          = Number(fileObj.linesize);
+      styleState.linestyle         = fileObj.linestyle;
+      styleState.fillOpacity       = Number(fileObj.fillOpacity);
+      styleState.fontsize          = Number(fileObj.fontsize);
+      styleState.fontColor         = fileObj.fontColor ?? fileObj.color;
+      styleState.labelOutlineColor = fileObj.labelOutlineColor !== undefined
+        ? (fileObj.labelOutlineColor ?? fileObj.color) : 'black';
+      styleState.labelOutlineWidth = (fileObj.labelOutlineWidthRelative !== false)
+        ? Number(fileObj.fontsize) / 4 : Number(fileObj.labelOutlineWidth);
+      styleState.labelpos          = fileObj.labelpos;
+
+      // 2. Trigger a visual refresh — SDK re-calls all styleContext getters for every feature.
+      //    The layer stays on the map; no features are removed or re-added.
+      try {
+        wmeSDK.Map.redrawLayer({ layerName });
+      } catch (e) {
+        console.warn(`${scriptName}: redrawLayer SDK call failed:`, e.message);
+      }
+
+      // 3. Persist the updated style to IndexedDB using store.put (in-place upsert, no delete needed)
+      try {
+        await updateLayerInIndexedDB(fileObj);
+      } catch (e) {
+        console.warn(`${scriptName}: redrawLayer could not update IndexedDB:`, e.message);
+      }
+    } finally {
+      toggleRedrawMessage(false);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
 
   function createButton(text, bgColor, mouseoverColor, textColor, type = 'button', labelFor = '') {
     let element;
@@ -2820,6 +3725,12 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
    ****************************************************************************/
   async function removeGeometryLayer(filename) {
     const layerName = filename.replace(/[^a-z0-9_-]/gi, '_');
+
+    // If this layer is currently being edited, close the dialog cleanly first
+    if (editingLayer?.filename === filename) cancelLayerEdit();
+
+    // Release the mutable style state reference for this layer
+    layerStyleStates.delete(layerName);
 
     try {
       // Use the SDK to remove the layer
