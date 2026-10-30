@@ -2,7 +2,7 @@
 // @name                WME GeoFile
 // @namespace           https://github.com/JS55CT
 // @description         WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2026.02.27.2
+// @version             2026.10.30.0
 // @author              JS55CT
 // @match               https://www.waze.com/*/editor*
 // @match               https://www.waze.com/editor*
@@ -12,12 +12,12 @@
 // @require             https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js
 // @require             https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
 // @require             https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.15.0/proj4-src.js
-// @require             https://update.greasyfork.org/scripts/524747/1542062/GeoKMLer.js
-// @require             https://update.greasyfork.org/scripts/527113/1538395/GeoKMZer.js
-// @require             https://update.greasyfork.org/scripts/523986/1575829/GeoWKTer.js
-// @require             https://update.greasyfork.org/scripts/523870/1534525/GeoGPXer.js
-// @require             https://update.greasyfork.org/scripts/526229/1537672/GeoGMLer.js
-// @require             https://update.greasyfork.org/scripts/526996/1537647/GeoSHPer.js
+// @require             https://update.greasyfork.org/scripts/524747/GeoKMLer.js
+// @require             https://update.greasyfork.org/scripts/527113/GeoKMZer.js
+// @require             https://update.greasyfork.org/scripts/523986/GeoWKTer.js
+// @require             https://update.greasyfork.org/scripts/523870/GeoGPXer.js
+// @require             https://update.greasyfork.org/scripts/526229/GeoGMLer.js
+// @require             https://update.greasyfork.org/scripts/526996/GeoSHPer.js
 // @connect             tigerweb.geo.census.gov
 // @connect             greasyfork.org
 // @connect             epsg.io
@@ -81,12 +81,25 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   'use strict';
   const scriptMetadata = GM_info.script;
   const scriptName = scriptMetadata.name;
+  const scriptVersion = GM_info.script.version;
   const downloadUrl = 'https://update.greasyfork.org/scripts/540764/WME%20GeoFile.user.js';
+
+  // **************************************************************************************************************
+  // IMPORTANT: Update this when releasing a new version of script
+  // **************************************************************************************************************
+  const SHOW_UPDATE_MESSAGE = true;
+  const SCRIPT_VERSION_CHANGES = [
+    'Label color, outline color & width controls, plus an Edit Style dialog.',
+    'Updated to use the WMESDK for layer names in the MapLayers sidebar.',
+  ];
+  const GF_URL = 'https://greasyfork.org/scripts/540764';
+  const SETTINGS_STORE_NAME = 'WMEGeoFileSettings';
+  const DEFAULT_SETTINGS = { lastVersion: '' };
+
   let geolist;
   let debug = false;
   let formathelp;
   let db;
-  let groupToggler;
   let projectionMap = {};
   let editingLayer = null;   // layerStoreObj currently in the edit dialog (null = not editing)
   let editPanel    = null;   // cached reference to the #WMEGeoEditDialog DOM element
@@ -148,8 +161,59 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     await new Promise(resolve => setTimeout(resolve, 1000));
     console.log(`${scriptName}: Bootstrap complete: All dependencies are ready.`);
     init();
+    showScriptInfoAlert();
   } catch (error) {
     console.error('Error during bootstrap initialization:', error);
+  }
+
+  /**
+   * Loads the script settings object from localStorage, falling back to defaults.
+   *
+   * @function loadSettings
+   * @returns {Object} Settings merged over DEFAULT_SETTINGS.
+   */
+  function loadSettings() {
+    try {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_STORE_NAME) ?? '{}') };
+    } catch (error) {
+      console.warn(`${scriptName}: Unable to read settings, using defaults`, error);
+      return { ...DEFAULT_SETTINGS };
+    }
+  }
+
+  /**
+   * Saves the script settings object to localStorage.
+   *
+   * @function saveSettings
+   * @param {Object} settings - Settings object to persist.
+   * @returns {void}
+   */
+  function saveSettings(settings) {
+    try {
+      localStorage.setItem(SETTINGS_STORE_NAME, JSON.stringify(settings));
+    } catch (error) {
+      console.warn(`${scriptName}: Unable to save settings`, error);
+    }
+  }
+
+  /**
+   * Shows the "What's New" popup once per script version via WazeWrap, then records the version in settings
+   * so it does not repeat on every reload.
+   *
+   * @function showScriptInfoAlert
+   * @returns {void}
+   */
+  function showScriptInfoAlert() {
+    if (!SHOW_UPDATE_MESSAGE) return;
+
+    const settings = loadSettings();
+    if (scriptVersion === settings.lastVersion) return;
+
+    const releaseNotes = `<p>What's New:</p><ul>${SCRIPT_VERSION_CHANGES.map(change => `<li>${change}</li>`).join('')}</ul>`;
+    WazeWrap.Interface.ShowScriptUpdate(scriptName, scriptVersion, releaseNotes, GF_URL);
+
+    settings.lastVersion = scriptVersion;
+    saveSettings(settings);
   }
 
   /*********************************************************************
@@ -1432,6 +1496,16 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     });
 
     setupProjectionsAndTransforms();
+
+    // Keep each file's Map layer in sync with its LayerSwitcher checkbox (checkbox name = file name)
+    wmeSDK.Events.on({
+      eventName: 'wme-layer-checkbox-toggled',
+      eventHandler: ({ name, checked }) => {
+        const layerName = name.replace(/[^a-z0-9_-]/gi, '_');
+        if (!layerStyleStates.has(layerName)) return; // not one of our layers
+        wmeSDK.Map.setLayerVisibility({ layerName, visibility: checked });
+      },
+    });
 
     wmeSDK.Events.on({
       eventName: 'wme-map-move-end',
@@ -2879,12 +2953,9 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
       console.log(`${scriptName}: layer: ${fileObj.filename} processed in ${totalLayerDuration.toFixed(2)} ms - ${successCount} features added`);
 
-      // Add group toggler logic if necessary (assuming SDK supports it)
-      if (!groupToggler) {
-        groupToggler = addGroupToggler(false, 'layer-switcher-group_wme_geofile', 'WME GeoFile');
-      }
       addToGeoList(fileObj.filename, fileObj.color, fileObj.orgFileext, fileObj.labelattribute, externalProjection);
-      addLayerToggler(groupToggler, fileObj.filename, layerid);
+      wmeSDK.LayerSwitcher.addLayerCheckbox({ name: fileObj.filename });
+      wmeSDK.LayerSwitcher.setLayerCheckboxChecked({ name: fileObj.filename, isChecked: true });
 
       // Check and store layers in IndexedDB
       try {
@@ -3843,8 +3914,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         // Fallback for any layer not registered in layerStyleStates (should not occur in normal use)
         console.warn(`${scriptName}: redrawLayer — no style state found for "${layerName}", falling back to full re-parse.`);
         try { wmeSDK.Map.removeLayer({ layerName }); } catch (e) { /* already removed */ }
-        document.getElementById(`t_${layerName}`)?.parentElement?.removeChild(document.getElementById(`t_${layerName}`));
-        document.getElementById(layerName)?.remove();
+        try { wmeSDK.LayerSwitcher.removeLayerCheckbox({ name: fileObj.filename }); } catch (e) { /* already removed */ }
         try { await removeLayerFromIndexedDB(fileObj.filename); } catch (e) { /* ignore */ }
         parseFile(fileObj);
         return;
@@ -3974,6 +4044,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     try {
       // Use the SDK to remove the layer
       wmeSDK.Map.removeLayer({ layerName: layerName });
+      try { wmeSDK.LayerSwitcher.removeLayerCheckbox({ name: filename }); } catch (e) { /* already removed */ }
       console.log(`${scriptName}: Layer removed with ID: ${layerName}`);
 
       // Asynchronously remove the layer from IndexedDB
@@ -3984,17 +4055,8 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
         console.error(`${scriptName}: Failed to remove layer ${filename} from IndexedDB:`, error);
       }
 
-      // Sanitize filename and define IDs
-      const listItemId = filename.replace(/[^a-z0-9_-]/gi, '_');
-      const layerTogglerId = `t_${listItemId}`;
-
-      // Remove the toggler item if it exists
-      const togglerItem = document.getElementById(layerTogglerId);
-      if (togglerItem?.parentElement) {
-        togglerItem.parentElement.removeChild(togglerItem);
-      }
-
       // Remove any list item using the listItemId
+      const listItemId = filename.replace(/[^a-z0-9_-]/gi, '_');
       const listItem = document.getElementById(listItemId);
       if (listItem) {
         listItem.remove();
@@ -4119,206 +4181,6 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
     console.log(`${scriptName}: Finished loading document format parsers.`);
     return { formats, formathelp };
-  }
-
-  /***********************************************************************************
-   * addGroupToggler
-   *
-   * Description:
-   * This function creates and adds a group toggler to a layer switcher UI component. It manages the visibility and interaction
-   * of different layer groups within a map or similar UI, providing a toggling mechanism for user interface groups.
-   *
-   * Parameters:
-   * @param {boolean} isDefault - A flag indicating whether the group is a default group.
-   * @param {string} layerSwitcherGroupItemName - The unique name used as an identifier for the layer switcher group element.
-   * @param {string} layerGroupVisibleName - The human-readable name for the layer group, shown in the UI.
-   *
-   * Returns:
-   * @returns {HTMLElement} - The group element that has been created or modified.
-   *
-   * Behavior:
-   * - If `isDefault` is true, it retrieves and operates on the existing group element related to the provided name.
-   * - Otherwise, it dynamically creates a new group list item.
-   * - Builds a toggler that includes a caret icon, a toggle switch, and a label displaying the group's visible name.
-   * - Attaches event handlers to manage collapsible behavior of the group toggler and switches.
-   * - Appends the configured group to the main UI component, either as an existing group or newly created one.
-   * - Logs the creation of the group toggler to the console for debugging purposes.
-   *****************************************************************************************/
-  function addGroupToggler(isDefault, layerSwitcherGroupItemName, layerGroupVisibleName) {
-    var group;
-    if (isDefault === true) {
-      group = document.getElementById(layerSwitcherGroupItemName).parentElement.parentElement;
-    } else {
-      var layerGroupsList = document.getElementsByClassName('list-unstyled togglers')[0];
-      group = document.createElement('li');
-      group.className = 'group';
-
-      var togglerContainer = document.createElement('div');
-      togglerContainer.className = 'layer-switcher-toggler-tree-category';
-
-      var groupButton = document.createElement('wz-button');
-      groupButton.color = 'clear-icon';
-      groupButton.size = 'xs';
-
-      var iCaretDown = document.createElement('i');
-      iCaretDown.className = 'toggle-category w-icon w-icon-caret-down';
-      iCaretDown.dataset.groupId = layerSwitcherGroupItemName.replace('layer-switcher-', '').toUpperCase();
-
-      var togglerSwitch = document.createElement('wz-toggle-switch');
-      togglerSwitch.className = layerSwitcherGroupItemName + ' hydrated';
-      togglerSwitch.id = layerSwitcherGroupItemName;
-      togglerSwitch.checked = true;
-
-      var label = document.createElement('label');
-      label.className = 'label-text';
-      label.htmlFor = togglerSwitch.id;
-
-      var togglerChildrenList = document.createElement('ul');
-      togglerChildrenList.className = 'collapsible-' + layerSwitcherGroupItemName.replace('layer-switcher-', '').toUpperCase();
-      label.appendChild(document.createTextNode(layerGroupVisibleName));
-      groupButton.addEventListener('click', layerTogglerGroupMinimizerEventHandler(iCaretDown));
-      togglerSwitch.addEventListener('click', layerTogglerGroupMinimizerEventHandler(iCaretDown));
-      groupButton.appendChild(iCaretDown);
-      togglerContainer.appendChild(groupButton);
-      togglerContainer.appendChild(togglerSwitch);
-      togglerContainer.appendChild(label);
-      group.appendChild(togglerContainer);
-      group.appendChild(togglerChildrenList);
-      layerGroupsList.appendChild(group);
-    }
-
-    if (debug) console.log(`${scriptName}: Layer Group Toggler created for ${layerGroupVisibleName}`);
-    return group;
-  }
-
-  /******************************************************************************
-   * addLayerToggler
-   *
-   * Description:
-   * This function adds a toggler for individual layers within a group in a layer switcher UI component. It manages the visibility
-   * and interaction for specific map layers, allowing users to toggle them on and off within a UI group.
-   *
-   * Parameters:
-   * @param {HTMLElement} groupToggler - The parent group toggler element under which the layer toggler is added.
-   * @param {string} layerName - The name of the layer, used for display and creating unique identifiers.
-   * @param {Object} layerObj - The layer object that is being toggled, typically representing a map or UI layer.
-   *
-   * Behavior:
-   * - Locates the container (UL) within the group toggler where new layer togglers are to be appended.
-   * - Creates a checkbox element for the layer, setting it to checked by default for visibility.
-   * - Attaches events to both the individual layer checkbox and the group checkbox for toggling functionality.
-   * - Appends the fully configured toggler to the UI.
-   * - Logs the creation of the layer toggler for debugging purposes.
-   *****************************************************************************/
-  function addLayerToggler(groupToggler, layerName, layerId) {
-    const layer_container = groupToggler.getElementsByTagName('UL')[0];
-    const layerGroupCheckbox = groupToggler.getElementsByClassName('layer-switcher-toggler-tree-category')[0].getElementsByTagName('wz-toggle-switch')[0];
-    const toggler = document.createElement('li');
-    const togglerCheckbox = document.createElement('wz-checkbox');
-    togglerCheckbox.setAttribute('checked', 'true');
-
-    // Generate ID for togglerCheckbox using layerName
-    const togglerId = 't_' + layerId;
-    togglerCheckbox.id = togglerId;
-
-    togglerCheckbox.className = 'hydrated';
-    togglerCheckbox.appendChild(document.createTextNode(layerName));
-    toggler.appendChild(togglerCheckbox);
-    layer_container.appendChild(toggler);
-
-    // Attach event handlers using layerId to manage visibility with SDK
-    togglerCheckbox.addEventListener('change', layerTogglerEventHandler(layerId));
-    layerGroupCheckbox.addEventListener('change', layerTogglerGroupEventHandler(togglerCheckbox, layerId));
-
-    if (debug) console.log(`${scriptName}: Layer Toggler created for ${layerName}`);
-  }
-
-  /*******************************************************************************
-   * layerTogglerEventHandler
-   *
-   * Description:
-   * Factory that returns a checkbox change handler for an individual layer toggler.
-   * When the checkbox state changes, the handler calls wmeSDK.Map.setLayerVisibility()
-   * to show or hide the corresponding SDK layer.
-   *
-   * Parameters:
-   * @param {string} layerId - The SDK layer name whose visibility is controlled.
-   *
-   * Returns:
-   * @returns {Function} A checkbox 'change' event handler.
-   *******************************************************************************/
-  function layerTogglerEventHandler(layerId) {
-    return function () {
-      const isVisible = this.checked;
-      try {
-        wmeSDK.Map.setLayerVisibility({
-          layerName: layerId,
-          visibility: isVisible,
-        });
-      } catch (error) {
-        console.error(`Failed to set visibility for layer with ID ${layerId}:`, error);
-      }
-      if (debug) console.log(`${scriptName}: Layer visibility set to ${isVisible} for layer ${layerId}`);
-    };
-  }
-
-  /*******************************************************************************
-   * layerTogglerGroupEventHandler
-   *
-   * Description:
-   * Factory that returns a checkbox change handler for an individual layer
-   * checkbox within a group. Visibility is set to true only when both the layer
-   * checkbox AND the parent group checkbox are checked. Also manages the group
-   * checkbox's disabled state so it cannot be toggled when all child layers
-   * are individually unchecked.
-   *
-   * Parameters:
-   * @param {HTMLInputElement} groupCheckbox - The parent group's checkbox element.
-   * @param {string}           layerId       - The SDK layer name to control.
-   *
-   * Returns:
-   * @returns {Function} A checkbox 'change' event handler.
-   *******************************************************************************/
-  function layerTogglerGroupEventHandler(groupCheckbox, layerId) {
-    return function () {
-      const shouldBeVisible = this.checked && groupCheckbox.checked;
-      try {
-        wmeSDK.Map.setLayerVisibility({
-          layerName: layerId,
-          visibility: shouldBeVisible,
-        });
-      } catch (error) {
-        console.error(`Failed to set group visibility for layer ${layerId}:`, error);
-      }
-      groupCheckbox.disabled = !this.checked;
-      if (!groupCheckbox.checked) {
-        groupCheckbox.disabled = false;
-      }
-      if (debug) console.log(`${scriptName}: WME GeoFile Group Layer visibility set to ${shouldBeVisible}`);
-    };
-  }
-
-  /*******************************************************************************
-   * layerTogglerGroupMinimizerEventHandler
-   *
-   * Description:
-   * Factory that returns a click handler for the layer-switcher group collapse
-   * button. Each click toggles the 'collapse-layer-switcher-group' class on the
-   * child <ul> (showing/hiding the layer list) and rotates the caret icon 180°
-   * via the 'upside-down' class to reflect the current expanded/collapsed state.
-   *
-   * Parameters:
-   * @param {HTMLElement} iCaretDown - The caret <i> icon element in the group header.
-   *
-   * Returns:
-   * @returns {Function} A click event handler.
-   *******************************************************************************/
-  function layerTogglerGroupMinimizerEventHandler(iCaretDown) {
-    return function () {
-      const ulCollapsible = iCaretDown.closest('li').querySelector('ul');
-      iCaretDown.classList.toggle('upside-down');
-      ulCollapsible.classList.toggle('collapse-layer-switcher-group');
-    };
   }
 
   /****************************************************************************************
