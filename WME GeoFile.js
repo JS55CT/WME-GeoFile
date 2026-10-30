@@ -2,7 +2,7 @@
 // @name                WME GeoFile
 // @namespace           https://github.com/JS55CT
 // @description         WME GeoFile is a File Importer that allows you to import various geometry files (supported formats: GeoJSON, KML, WKT, GML, GPX, OSM, shapefiles(SHP,SHX,DBF).ZIP) into the Waze Map Editor (WME).
-// @version             2026.10.30.0
+// @version             2026.10.30.1
 // @author              JS55CT
 // @match               https://www.waze.com/*/editor*
 // @match               https://www.waze.com/editor*
@@ -89,8 +89,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
   // **************************************************************************************************************
   const SHOW_UPDATE_MESSAGE = true;
   const SCRIPT_VERSION_CHANGES = [
-    'Label color, outline color & width controls, plus an Edit Style dialog.',
-    'Updated to use the WMESDK for layer names in the MapLayers sidebar.',
+    '⚙️ Updated to the WME SDK async mode. No visible change to layers or settings.',
   ];
   const GF_URL = 'https://greasyfork.org/scripts/540764';
   const SETTINGS_STORE_NAME = 'WMEGeoFileSettings';
@@ -154,13 +153,13 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
   let wmeSDK;
   try {
-    wmeSDK = await bootstrap({ useWazeWrap: true, scriptUpdateMonitor: { downloadUrl } });
+    wmeSDK = await bootstrap({ useWazeWrap: true, mode: 'async', scriptUpdateMonitor: { downloadUrl } });
     formathelp = createLayersFormats().formathelp;
     // HACK bootstrp uses "wme-ready" "Dispatched only once, after the wme-initialized, wme-logged-in, and wme-map-data-loaded events have been dispatched."
     // But we need wmeSDK.DataModel.Countries.getTopCountry(); in init() fires with null 90% of the time, so have to wait a little!
     await new Promise(resolve => setTimeout(resolve, 1000));
     console.log(`${scriptName}: Bootstrap complete: All dependencies are ready.`);
-    init();
+    await init();
     showScriptInfoAlert();
   } catch (error) {
     console.error('Error during bootstrap initialization:', error);
@@ -491,7 +490,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       }
     })();
 
-    wmeSDK.Sidebar.registerScriptTab().then(({ tabLabel, tabPane }) => {
+    wmeSDK.Sidebar.registerScriptTab().then(async ({ tabLabel, tabPane }) => {
       tabLabel.textContent = 'GeoFile';
       tabLabel.title = `${scriptName}`;
 
@@ -891,7 +890,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       const edit_applyBtn = createButton('Apply Changes', '#0066cc', '#0052a3', '#FFFFFF', 'button');
       edit_applyBtn.style.marginTop = '8px';
       edit_applyBtn.title = 'Redraw layer with new style settings';
-      edit_applyBtn.addEventListener('click', applyLayerEdits);
+      edit_applyBtn.addEventListener('click', () => applyLayerEdits().catch((error) => console.error(`${scriptName}: Apply edits failed:`, error)));
       editDialogBody.appendChild(edit_applyBtn);
 
       editPanel.appendChild(editDialogBody);
@@ -939,7 +938,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
       // === US Census Section (US only) ===
       try {
-        const wmeTopCountry = wmeSDK.DataModel.Countries.getTopCountry();
+        const wmeTopCountry = await wmeSDK.DataModel.Countries.getTopCountry();
 
         if (wmeTopCountry && ['US', 'GQ', 'RQ', 'VQ', 'AQ', 'CQ'].includes(wmeTopCountry.abbr)) {
           console.log(`${scriptName}: Top Level Country = ${wmeTopCountry.name} | ${wmeTopCountry.abbr}`);
@@ -980,7 +979,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
           censusCard.appendChild(zipCodeBoundaryButtonContainer);
 
           const whatsInViewButtonContainer = createButton('Whats in View', '#BA68C8', '#9C27B0', '#FFFFFF', 'input');
-          whatsInViewButtonContainer.onclick = () => { whatsInView(); };
+          whatsInViewButtonContainer.onclick = () => { whatsInView().catch((error) => console.error(`${scriptName}: What's in View failed:`, error)); };
           censusCard.appendChild(whatsInViewButtonContainer);
 
           geoform.appendChild(censusCard);
@@ -1439,7 +1438,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       let submit_WKT_btn = createButton('Import WKT', '#8BC34A', '#689F38', '#FFFFFF', 'input');
       submit_WKT_btn.id = 'submit_WKT_btn';
       submit_WKT_btn.title = 'Import WKT Geometry to WME Layer';
-      submit_WKT_btn.addEventListener('click', draw_WKT);
+      submit_WKT_btn.addEventListener('click', () => draw_WKT().catch((error) => console.error(`${scriptName}: WKT import failed:`, error)));
       buttonContainer.appendChild(submit_WKT_btn);
 
       let clear_WKT_btn = createButton('Clear WKT', '#E57373', '#D32F2F', '#FFFFFF', 'input');
@@ -1500,10 +1499,10 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     // Keep each file's Map layer in sync with its LayerSwitcher checkbox (checkbox name = file name)
     wmeSDK.Events.on({
       eventName: 'wme-layer-checkbox-toggled',
-      eventHandler: ({ name, checked }) => {
+      eventHandler: async ({ name, checked }) => {
         const layerName = name.replace(/[^a-z0-9_-]/gi, '_');
         if (!layerStyleStates.has(layerName)) return; // not one of our layers
-        wmeSDK.Map.setLayerVisibility({ layerName, visibility: checked });
+        try { await wmeSDK.Map.setLayerVisibility({ layerName, visibility: checked }); } catch (error) { console.error(`${scriptName}: Layer visibility update failed:`, error); }
       },
     });
 
@@ -1514,7 +1513,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
         if (whatsInView) {
           // Call the update function to refresh the contents of the existing popup
-          updateWhatsInView(whatsInView);
+          updateWhatsInView(whatsInView).catch((error) => console.error(`${scriptName}: What's in View update failed:`, error));
         }
         // If the message does not exist, do nothing
       },
@@ -1926,7 +1925,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
    * - Utilizes global variables and functions such as `formats`, `storedLayers`, and `parseFile`.
    * - Relies on DOM elements and user inputs that need to be correctly set up in the environment for this function to work.
    *****************************************************************************/
-  function draw_WKT() {
+  async function draw_WKT() {
     if (editingLayer) {
       WazeWrap.Alerts.warning(scriptName, `Please Apply or Cancel your edits to "<b>${editingLayer.filename}</b>" before importing a new layer.`);
       return;
@@ -1957,7 +1956,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
     try {
       // Try setting the visibility of the layer to check existence
-      wmeSDK.Map.setLayerVisibility({
+      await wmeSDK.Map.setLayerVisibility({
         layerName: layerID,
         visibility: true,
       });
@@ -2056,7 +2055,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
     // Get boundary geoJSON from is US Census Bureau
     getArcGISdata(item)
-      .then((geojson) => {
+      .then(async (geojson) => {
         if (!geojson || !geojson.features || geojson.features.length === 0) {
           console.log(`No ${item} Boundary Available, Sorry!`);
           WazeWrap.Alerts.info(scriptName, `No ${item} Boundary Available, Sorry!`);
@@ -2075,7 +2074,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
         try {
           // Attempt to set the visibility of the layer using the SDK to check if it exists
-          wmeSDK.Map.setLayerVisibility({
+          await wmeSDK.Map.setLayerVisibility({
             layerName: layerID,
             visibility: true,
           });
@@ -2907,7 +2906,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       // Option: Provide a selection popup for users to choose which layer to merge if layers already exist.
       // Current Approach: For now, we stop execution and inform the user if the layer name is already in use.
       try {
-        wmeSDK.Map.addLayer({
+        await wmeSDK.Map.addLayer({
           layerName: layerid,
           styleRules: layerConfig.styleRules,
           styleContext: layerConfig.styleContext,
@@ -2929,7 +2928,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       layerStyleStates.set(layerid, mutableStyle);
 
       // Set visibility to true for the layer
-      wmeSDK.Map.setLayerVisibility({ layerName: layerid, visibility: true });
+      await wmeSDK.Map.setLayerVisibility({ layerName: layerid, visibility: true });
 
       // Map features array with unique index-based IDs  TODO:  Look into addeding the unique ID in transformGeoJSON()
       const featuresToLog = features.map((f, index) => ({
@@ -2944,7 +2943,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       // Track the total processing time for the layer
       const layerStartTime = performance.now();
 
-      wmeSDK.Map.dangerouslyAddFeaturesToLayerWithoutValidation({ features: featuresToLog, layerName: layerid });
+      await wmeSDK.Map.dangerouslyAddFeaturesToLayerWithoutValidation({ features: featuresToLog, layerName: layerid });
 
       // Handle completion logging
       // Calculate and log the total processing time for the layer
@@ -2954,8 +2953,8 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       console.log(`${scriptName}: layer: ${fileObj.filename} processed in ${totalLayerDuration.toFixed(2)} ms - ${successCount} features added`);
 
       addToGeoList(fileObj.filename, fileObj.color, fileObj.orgFileext, fileObj.labelattribute, externalProjection);
-      wmeSDK.LayerSwitcher.addLayerCheckbox({ name: fileObj.filename });
-      wmeSDK.LayerSwitcher.setLayerCheckboxChecked({ name: fileObj.filename, isChecked: true });
+      await wmeSDK.LayerSwitcher.addLayerCheckbox({ name: fileObj.filename });
+      await wmeSDK.LayerSwitcher.setLayerCheckboxChecked({ name: fileObj.filename, isChecked: true });
 
       // Check and store layers in IndexedDB
       try {
@@ -3655,7 +3654,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
     removeButton.className = 'geofile-remove-btn';
     removeButton.textContent = '\u00D7';
     removeButton.title = `Remove ${filename}`;
-    removeButton.addEventListener('click', () => removeGeometryLayer(filename));
+    removeButton.addEventListener('click', () => removeGeometryLayer(filename).catch((error) => console.error(`${scriptName}: Remove layer failed:`, error)));
     liObj.appendChild(removeButton);
 
     geolist.appendChild(liObj);
@@ -3913,8 +3912,8 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       if (!styleState) {
         // Fallback for any layer not registered in layerStyleStates (should not occur in normal use)
         console.warn(`${scriptName}: redrawLayer — no style state found for "${layerName}", falling back to full re-parse.`);
-        try { wmeSDK.Map.removeLayer({ layerName }); } catch (e) { /* already removed */ }
-        try { wmeSDK.LayerSwitcher.removeLayerCheckbox({ name: fileObj.filename }); } catch (e) { /* already removed */ }
+        try { await wmeSDK.Map.removeLayer({ layerName }); } catch (e) { /* already removed */ }
+        try { await wmeSDK.LayerSwitcher.removeLayerCheckbox({ name: fileObj.filename }); } catch (e) { /* already removed */ }
         try { await removeLayerFromIndexedDB(fileObj.filename); } catch (e) { /* ignore */ }
         parseFile(fileObj);
         return;
@@ -3939,7 +3938,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       // 2. Trigger a visual refresh — SDK re-calls all styleContext getters for every feature.
       //    The layer stays on the map; no features are removed or re-added.
       try {
-        wmeSDK.Map.redrawLayer({ layerName });
+        await wmeSDK.Map.redrawLayer({ layerName });
       } catch (e) {
         console.warn(`${scriptName}: redrawLayer SDK call failed:`, e.message);
       }
@@ -4043,8 +4042,8 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
     try {
       // Use the SDK to remove the layer
-      wmeSDK.Map.removeLayer({ layerName: layerName });
-      try { wmeSDK.LayerSwitcher.removeLayerCheckbox({ name: filename }); } catch (e) { /* already removed */ }
+      await wmeSDK.Map.removeLayer({ layerName: layerName });
+      try { await wmeSDK.LayerSwitcher.removeLayerCheckbox({ name: filename }); } catch (e) { /* already removed */ }
       console.log(`${scriptName}: Layer removed with ID: ${layerName}`);
 
       // Asynchronously remove the layer from IndexedDB
@@ -4211,7 +4210,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
    * - Throws an error for invalid dataType options.
    * - Rejects the promise if JSON parsing fails or the HTTP request encounters an error.
    ****************************************************************************************/
-  function getArcGISdata(dataType = 'state', returnGeo = true) {
+  async function getArcGISdata(dataType = 'state', returnGeo = true) {
     // Define URLs and field names for each data type
     const CONFIG = {
       state: {
@@ -4244,7 +4243,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
 
     if (returnGeo) {
       // Obtain the center of the map in WGS84 format and Create a geometry object for it
-      const wgs84Center = wmeSDK.Map.getMapCenter(); // Get the current center coordinates of the WME map
+      const wgs84Center = await wmeSDK.Map.getMapCenter(); // Get the current center coordinates of the WME map
       geometry = {
         x: wgs84Center.lon,
         y: wgs84Center.lat,
@@ -4253,7 +4252,7 @@ GeoWKTer, GeoGPXer, GeoGMLer, GeoKMLer, GeoKMZer, GeoSHPer external classes/func
       geometryType = 'esriGeometryPoint';
     } else {
       // Get current map extent and visible regions
-      const wgs84Extent = wmeSDK.Map.getMapExtent();
+      const wgs84Extent = await wmeSDK.Map.getMapExtent();
       geometry = {
         xmin: wgs84Extent[0],
         ymin: wgs84Extent[1],
